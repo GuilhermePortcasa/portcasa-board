@@ -3,11 +3,10 @@ import requests
 import base64
 import time
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
-# Carrega variáveis de ambiente de forma inteligente
+# Carrega variáveis de ambiente
 def load_env():
-    # Caminhos onde o .env pode estar: na pasta atual ou na pasta pai
     possible_paths = [
         '.env', 
         '../.env', 
@@ -18,7 +17,7 @@ def load_env():
     found = False
     for path in possible_paths:
         if os.path.exists(path):
-            with open(path, 'r') as f:
+            with open(path, 'r', encoding='utf-8') as f:
                 for line in f:
                     if line.strip() and not line.startswith('#'):
                         key, value = line.strip().split('=', 1)
@@ -27,11 +26,10 @@ def load_env():
             break
             
     if not found:
-        print("⚠️ AVISO: Arquivo .env não encontrado em nenhum dos caminhos possíveis!")
+        print("⚠️ AVISO: Arquivo .env não encontrado!")
 
 load_env()
 
-# Agora o os.environ.get vai funcionar!
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 
@@ -55,12 +53,12 @@ class BlingService:
         raise Exception(f"Loja {self.nome_loja} não encontrada no banco.")
 
     def _update_tokens_db(self, new_data):
-        """Atualiza os tokens no Supabase após o refresh"""
+        """Atualiza os tokens no Supabase"""
         url = f"{SUPABASE_URL}/rest/v1/integracoes_bling?nome_loja=eq.{self.nome_loja}"
         requests.patch(url, headers=self.supabase_headers, json=new_data)
 
     def _refresh_token(self, refresh_token):
-        """Pede um novo token para o Bling usando o refresh_token"""
+        """Força a renovação do token junto ao Bling"""
         print(f"🔄 Renovando token para {self.nome_loja}...")
         client_id = os.environ.get(f"BLING_CLIENT_ID_{self.nome_loja}")
         client_secret = os.environ.get(f"BLING_SECRET_{self.nome_loja}")
@@ -82,7 +80,6 @@ class BlingService:
 
         if resp.status_code == 200:
             data = resp.json()
-            # Calcula nova expiração
             expires_at = datetime.now() + timedelta(seconds=data['expires_in'])
             
             new_db_data = {
@@ -97,38 +94,33 @@ class BlingService:
             raise Exception(f"Erro ao renovar token: {resp.text}")
 
     def get_valid_token(self):
-        """Verifica se o token venceu e retorna um válido"""
+        """Retorna um token válido, renovando se necessário (buffer de 5 min)"""
         data = self._get_tokens_db()
-        
-        # --- CORREÇÃO DO ERRO DE DATA ---
-        # 1. Lê a data do banco
-        expires_at = datetime.fromisoformat(data['expires_at'].replace('Z', ''))
-        
-        # 2. Se ela tiver fuso horário (aware), remove para ficar igual ao datetime.now() (naive)
-        if expires_at.tzinfo is not None:
-            expires_at = expires_at.replace(tzinfo=None)
-        # --------------------------------
+        expires_at_str = data['expires_at'].replace('Z', '+00:00')
+        expires_at = datetime.fromisoformat(expires_at_str)
 
-        # Se faltam menos de 10 minutos para vencer, renova
-        if datetime.now() > (expires_at - timedelta(minutes=10)):
+        # Garante comparação entre datas com fuso horário
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        
+        agora = datetime.now(timezone.utc)
+
+        # Se faltam menos de 5 minutos para expirar, renova
+        if agora > (expires_at - timedelta(minutes=5)):
             return self._refresh_token(data['refresh_token'])
         
         return data['access_token']
 
     def get_all_pages(self, endpoint, params=None):
-        """
-        Gerador que baixa TODAS as páginas de um endpoint.
-        Lida com paginação e Rate Limit automaticamente.
-        """
+        """Gerador de páginas com auto-cura para tokens expirados"""
         if params is None: params = {}
-        token = self.get_valid_token()
-        headers = {"Authorization": f"Bearer {token}"}
-        
-        # --- CORREÇÃO AQUI: Pega a página dos params ou inicia em 1 ---
         pagina = params.get('pagina', 1)
         
         while True:
-            self.current_page = pagina # Para podermos ler no script de carga
+            # BUSCA TOKEN NOVO A CADA PÁGINA (Essencial!)
+            token = self.get_valid_token()
+            headers = {"Authorization": f"Bearer {token}"}
+            
             params['pagina'] = pagina
             params['limite'] = 100
             
@@ -136,26 +128,36 @@ class BlingService:
                 print(f"📥 {self.nome_loja}: Baixando {endpoint} (Pág {pagina})...")
                 resp = requests.get(f"{self.base_url}{endpoint}", headers=headers, params=params)
                 
+                # Caso o token expire EXATAMENTE entre a verificação e a chamada
+                if resp.status_code == 401:
+                    print("⚠️ Token invalidado durante a chamada. Tentando refresh forçado...")
+                    data_db = self._get_tokens_db()
+                    token = self._refresh_token(data_db['refresh_token'])
+                    headers = {"Authorization": f"Bearer {token}"}
+                    resp = requests.get(f"{self.base_url}{endpoint}", headers=headers, params=params)
+
                 if resp.status_code == 429:
-                    print("⏳ Rate limit atingido. Esperando 2 segundos...")
-                    time.sleep(2)
+                    print("⏳ Rate limit atingido. Esperando 3 segundos...")
+                    time.sleep(3)
                     continue
 
                 if resp.status_code != 200:
-                    print(f"❌ Erro {resp.status_code}: {resp.text}")
+                    print(f"❌ Erro {resp.status_code} na página {pagina}: {resp.text}")
                     break
 
                 data = resp.json()
                 items = data.get('data', [])
                 
                 if not items:
+                    print(f"🏁 Fim da paginação em {endpoint}.")
                     break
 
                 yield items
 
                 pagina += 1
-                time.sleep(0.4)
+                time.sleep(0.3) # Delay entre páginas para respeitar o Bling
                 
             except Exception as e:
-                print(f"Erro na requisição: {e}")
+                print(f"⚠️ Erro na requisição da pág {pagina}: {e}")
                 time.sleep(5)
+                continue

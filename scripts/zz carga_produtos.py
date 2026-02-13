@@ -95,6 +95,13 @@ def carregar_catalogo_detalhado(nome_loja, pagina_inicial=1):
                     "fornecedor": nome_fornecedor,
                     "categoria_id": categoria_id
                 }
+
+                # --- REGRA DE IDENTIDADE ÚNICA ---
+                if nome_loja == "PORTCASA":
+                    item["id_bling_portcasa"] = id_produto
+                elif nome_loja == "PORTFIO":
+                    item["id_bling_portfio"] = id_produto
+                # ---------------------------------
                 
                 buffer_produtos.append(item)
                 total_loja += 1
@@ -117,7 +124,7 @@ def carregar_catalogo_detalhado(nome_loja, pagina_inicial=1):
 
 if __name__ == "__main__":
     # 1. CONTINUA PORTCASA da página 24
-    carregar_catalogo_detalhado("PORTCASA", pagina_inicial=55)
+    carregar_catalogo_detalhado("PORTCASA", pagina_inicial=63)
     
     # 2. PORTFIO começa do zero (página 1)
     carregar_catalogo_detalhado("PORTFIO", pagina_inicial=1)

@@ -1,0 +1,366 @@
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+
+// --- CONFIGURAÇÕES E CONSTANTES ---
+const DEPOSITOS: Record<string, string> = {
+  "14887582360": "LOJA",
+  "6432743977": "SITE",
+  "14887265613": "FULL"
+};
+
+// IDs que NÃO são Venda (Remessas, Devoluções de Compra, etc)
+const IDS_NATUREZA_BLOQUEADA = [
+  7255067378, 7314982489, 7256147975, 6432743917, // PortFio
+  15108547530, 15108547532                        // Casa Modelo
+];
+
+// IDs de Devolução (Entrada na tabela 'devolucoes')
+const IDS_NATUREZA_DEVOLUCAO = [
+  7255067378, 7314982489, 7256147975, 
+  15108547531, 15108547533,
+  15108451958, 15105899604, 15104895197,
+  15108451958, 15106005559,
+  15104888811, 15104888810,
+  15104888812, 15105145131,
+  15104888813, 15104888814,
+  15107012796, 6937065086,
+  15103347853, 7255067378,
+  7314982489, 7256147975                  
+];
+
+const IDS_NATUREZA_IGNORAR_COMPRA = [
+  15107012796, 6937065086, 15103347853, // PortFio ROM/Outros
+  15105899604, 15104895197, 15108451958, // PortCasa ROM
+  15106005559, 15105145131
+];
+
+const BLACKLIST_FORNECEDORES = [
+    "COM DE FIOS E TECIDOS PORTFIO", "COMERCIO DE FIOS E TECIDOS PORTFIO LTDA",
+    "PORTCASA ON LINE LTDA", "MULTIART COMERCIO IMPORTACAO LTDA",
+    "MBF INDUSTRIA DE TECIDOS E CONFECCOES LTDA EPP", "MC IND E CONFECCOES LTDA EPP",
+    "MGM ARTIGOS PARA DECORACAO LTDA", "GR2M CONFECCAO E COMERCIO LTDA",
+    "INDUSTRIA DE TAPETES LANCER S/A", "INDUSTRIA DE PLASTICOS MF LTDA",
+    "LIN RAN VARIEDADES DOMESTICAS", "LIMA & LIMA COMÉRCIO DE TAPETES - LTDA",
+    "LE PRESENTES LTDA", "KEITA INDUSTRIA E COMERCIO LTDA",
+    "INDUSTRIA E COMERCIO ASHI II LTDA", "PEDROSA FABRICAÇÃO DE ARTEFATOS TÊXTEIS LTDA",
+    "PRATA TEXTIL COM E MANUF DE TAPETES LTDA", "PRATATEXTIL COMERCIO E MANUFATURAS DE TAPETES LTDA",
+    "EBAZAR.COM.BR LTDA", "SONO E CONFORTO COMERCIO LTDA"
+];
+
+const ID_LOJA_PORTFIO_SITE = 204457689; 
+const ID_SIT_FULL = 375989;
+const ID_SIT_ATENDIDO = 9;
+const IDS_NFE_IGNORAR = [1, 2, 4, 8, 9, 10]; // 1 = Pendente (Padrão ignorar)
+
+Deno.serve(async (req) => {
+  try {
+    const url = new URL(req.url)
+    const nomeLoja = url.searchParams.get('loja')?.toUpperCase()
+    if (!nomeLoja) return new Response("Loja ausente", { status: 400 });
+
+    const body = await req.json();
+    const idBling = body.data?.produto?.id || body.data?.id;
+    const event = body.event;
+
+    console.log(`📥 [${nomeLoja}] Evento: ${event} | ID: ${idBling}`);
+
+    if (!idBling || !event) { return new Response("OK", { status: 200 }); }
+
+    const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
+
+    // --- REFRESH TOKEN ---
+    const { data: integracao } = await supabase.from('integracoes_bling').select('*').eq('nome_loja', nomeLoja).single();
+    let token = integracao.access_token;
+    if (new Date(integracao.expires_at) < new Date(Date.now() + 5 * 60000)) {
+       const auth = btoa(`${Deno.env.get(`BLING_CLIENT_ID_${nomeLoja}`)}:${Deno.env.get(`BLING_SECRET_${nomeLoja}`)}`);
+       const r = await fetch(`https://www.bling.com.br/Api/v3/oauth/token`, { 
+          method: 'POST', headers: { 'Authorization': `Basic ${auth}`, 'Content-Type': 'application/x-www-form-urlencoded' }, 
+          body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: integracao.refresh_token }) 
+       }).then(res => res.json());
+       token = r.access_token;
+       await supabase.from('integracoes_bling').update({ access_token: token, refresh_token: r.refresh_token, expires_at: new Date(Date.now() + r.expires_in * 1000).toISOString() }).eq('nome_loja', nomeLoja);
+    }
+
+    const atualizarEstoqueManual = async (sku: string) => {
+      const resEst = await fetch(`https://www.bling.com.br/Api/v3/estoques/saldos?skus[]=${sku}`, { headers: { "Authorization": `Bearer ${token}` } });
+      if (resEst.ok) {
+        const { data: saldos } = await resEst.json();
+        for (const s of saldos) {
+          for (const dep of s.depositos) {
+            const canal = DEPOSITOS[String(dep.id)];
+            if (canal) await supabase.from('estoque').upsert({ sku: sku, canal: canal, quantidade: dep.saldoFisico, updated_at: new Date().toISOString() }, { onConflict: 'sku,canal' });
+          }
+        }
+      }
+    };
+
+    // --- ROTEAMENTO ---
+
+    // A) ESTOQUE
+    if (event.includes('stock.')) {
+      const depInfo = body.data?.deposito;
+      const canal = DEPOSITOS[String(depInfo?.id)];
+      if (canal) {
+        const colId = `id_bling_${nomeLoja.toLowerCase().replace('_', '')}`;
+        const { data: prod } = await supabase.from('produtos').select('sku,tipo').eq(colId, idBling).single();
+        if (prod && prod.tipo !== 'E') {
+          await supabase.from('estoque').upsert({ sku: prod.sku, canal: canal, quantidade: depInfo.saldoFisico, updated_at: new Date().toISOString() }, { onConflict: 'sku,canal' });
+        }
+      }
+    }
+
+    // B) PEDIDOS DE VENDA
+    else if (event.includes('order.') || event.includes('sales.')) {
+      const resp = await fetch(`https://www.bling.com.br/Api/v3/pedidos/vendas/${idBling}`, { headers: { "Authorization": `Bearer ${token}` } });
+      if (resp.ok) {
+        const { data: v } = await resp.json();
+        let origem = (nomeLoja === 'PORTFIO' && v.situacao?.id === ID_SIT_FULL) ? "SITE_FULL" : 
+                     (nomeLoja === 'PORTCASA' && v.situacao?.id === ID_SIT_ATENDIDO) ? "LOJA" : null;
+
+        if (origem) {
+          const itens = v.itens || [];
+          let totalVenda = itens.reduce((acc, i) => acc + (i.valor * i.quantidade), 0) || 1;
+          for (const item of itens) {
+            if (IDS_NATUREZA_BLOQUEADA.includes(item.naturezaOperacao?.id)) continue;
+            const peso = (item.valor * item.quantidade) / totalVenda;
+            await supabase.from('pedidos_venda').upsert({
+              id: idBling, sku: item.codigo, data_pedido: v.data, origem: origem, loja: nomeLoja,
+              quantidade: item.quantidade, preco_unitario: item.valor, 
+              desconto: ((v.desconto?.valor || 0) * peso) / item.quantidade + (item.desconto || 0),
+              frete: ((v.transporte?.frete || 0) * peso) / item.quantidade
+            });
+            await atualizarEstoqueManual(item.codigo);
+          }
+        } else {
+          await supabase.from('pedidos_venda').delete().eq('id', idBling);
+        }
+      }
+    }
+
+    // C) NOTAS FISCAIS (VENDAS E DEVOLUÇÕES)
+    else if (event.includes('invoice.') || event.includes('nfe.')) {
+      const resp = await fetch(`https://www.bling.com.br/Api/v3/nfe/${idBling}`, { headers: { "Authorization": `Bearer ${token}` } });
+      if (resp.ok) {
+        const { data: nf } = await resp.json();
+        const natId = nf.naturezaOperacao?.id;
+        const eSerie1 = nf.serie === null || String(nf.serie) === "1";
+        
+        // Validação Padrão (Ignora Pendente, Cancelada, etc)
+        const eSituacaoValidaPadrao = !IDS_NFE_IGNORAR.includes(nf.situacao);
+
+        // --- ROTA 1: VENDA (Saída Tipo 1) ---
+        // Aqui seguimos a regra padrão: deve ser Autorizada e Série 1
+        if (nf.tipo === 1 && eSerie1 && eSituacaoValidaPadrao && !IDS_NATUREZA_BLOQUEADA.includes(natId)) {
+          const itens = nf.itens || [];
+          let totalItens = itens.reduce((acc, i) => acc + (i.valorUnitario * i.quantidade), 0) || 1;
+          const valDescCalc = Math.max(0, (totalItens + (nf.valorFrete || 0) + (nf.outrasDespesas || 0)) - (nf.valorNota || 0));
+
+          for (const item of itens) {
+            const peso = (item.valorUnitario * item.quantidade) / totalItens;
+            await supabase.from('nfe_saida').upsert({
+              id: idBling, sku: item.codigo, data_emissao: nf.dataEmissao.substring(0, 10),
+              origem: nomeLoja === 'CASA_MODELO' ? 'CASA_MODELO' : 'SITE', loja: nomeLoja,
+              quantidade: item.quantidade, preco_unitario: item.valorUnitario,
+              desconto: (valDescCalc * peso) / item.quantidade, frete: ((nf.valorFrete || 0) * peso) / item.quantidade
+            });
+          }
+        } 
+        
+        // --- ROTA 2: DEVOLUÇÃO (Entrada Tipo 0) ---
+        else if (nf.tipo === 0 && IDS_NATUREZA_DEVOLUCAO.includes(natId)) {
+          
+          let origemDevolucao = null;
+
+          // REGRA PORTCASA: Série 888 + Pendente (Situação 1)
+          if (nomeLoja === 'PORTCASA') {
+            const eSerie888 = String(nf.serie) === "888";
+            const ePendente = nf.situacao === 1; 
+            if (eSerie888 && ePendente) {
+              origemDevolucao = "LOJA";
+            }
+          } 
+          // REGRA PADRÃO (PortFio / Casa Modelo): Situação Válida + Regras de Loja
+          else if (eSituacaoValidaPadrao) {
+            if (nomeLoja === 'PORTFIO') {
+               if (nf.loja?.id === ID_LOJA_PORTFIO_SITE) origemDevolucao = "SITE";
+            } 
+            else if (nomeLoja === 'CASA_MODELO') {
+               origemDevolucao = "CASA_MODELO";
+            }
+          }
+
+          if (origemDevolucao) {
+            const itens = nf.itens || [];
+            
+            // Dados Globais da Nota
+            const valFrete = nf.valorFrete || 0;
+            const valOutras = nf.outrasDespesas || 0;
+            const valNota = nf.valorNota || 0;
+
+            // 1. Calcula soma bruta (Usa .valor ou .valorUnitario)
+            let somaProdutos = itens.reduce((acc, i) => {
+               const preco = i.valor || i.valorUnitario || 0;
+               return acc + (preco * i.quantidade);
+            }, 0);
+            
+            if (somaProdutos === 0) somaProdutos = 1;
+
+            // 2. Desconto Global Implícito
+            const totalEsperado = somaProdutos + valFrete + valOutras;
+            let descontoTotal = Math.max(0, totalEsperado - valNota);
+
+            for (const item of itens) {
+              const preco = item.valor || item.valorUnitario || 0;
+              const qtd = item.quantidade;
+              const valorBrutoItem = preco * qtd;
+
+              // Peso e Rateio
+              const peso = valorBrutoItem / somaProdutos;
+              const descRateio = descontoTotal * peso;
+              const freteRateio = valFrete * peso;
+
+              // Valor Líquido Final
+              const valorEstornoLiquido = (valorBrutoItem + freteRateio) - descRateio;
+
+              await supabase.from('devolucoes').upsert({
+                id: idBling, 
+                sku: item.codigo, 
+                data_devolucao: nf.dataEmissao.substring(0, 10),
+                origem: origemDevolucao, 
+                loja: nomeLoja, 
+                quantidade: qtd, 
+                valor_estorno: valorEstornoLiquido
+              });
+            }
+            console.log(`✅ Devolução ${idBling} salva (${origemDevolucao})`);
+          } else {
+             // Se não atende aos critérios (ex: PortCasa não pendente), remove
+             await supabase.from('devolucoes').delete().eq('id', idBling);
+          }
+        }
+        // --- ROTA 3: COMPRA (Entrada Tipo 0) ---
+        else if (nf.tipo === 0 && !IDS_NATUREZA_DEVOLUCAO.includes(natId)) {
+            const nomeFornecedor = nf.contato?.nome?.toUpperCase() || "";
+            const ehFornecedorBloqueado = BLACKLIST_FORNECEDORES.some(f => nomeFornecedor.includes(f.toUpperCase()));
+            const ehNaturezaBloqueada = IDS_NATUREZA_IGNORAR_COMPRA.includes(natId);
+            const ehLojaCompraValida = nf.loja?.id === 0; 
+
+            if (!ehFornecedorBloqueado && !ehNaturezaBloqueada && ehLojaCompraValida && eSituacaoValidaPadrao) {
+                const itens = nf.itens || [];
+                
+                // Valores para Rateio
+                const valFreteTotal = nf.valorFrete || 0;
+                const valOutrasTotal = nf.outrasDespesas || 0;
+                const totalRateioHeader = valFreteTotal + valOutrasTotal;
+
+                let somaProdutos = itens.reduce((acc, i) => acc + ((i.valor || 0) * i.quantidade), 0);
+                if (somaProdutos === 0) somaProdutos = 1;
+
+                for (const item of itens) {
+                    if (!item.codigo || item.codigo.trim() === "") continue;
+
+                    const qtd = item.quantidade;
+                    const valorBrutoUnit = item.valor || item.valorUnitario || 0;
+                    const pesoItem = (valorBrutoUnit * qtd) / somaProdutos;
+
+                    // Cálculo de componentes
+                    const freteRateadoUnit = (totalRateioHeader * pesoItem) / qtd;
+                    const ipiUnit = (item.impostos?.ipi?.valor || 0) / qtd;
+                    const descUnit = item.desconto || 0;
+
+                    await supabase.from('entradas_compras').upsert({
+                        id_bling: idBling,
+                        sku: item.codigo,
+                        data_entrada: nf.dataEmissao.substring(0, 10),
+                        quantidade: qtd,
+                        custo_unitario: valorBrutoUnit,
+                        desconto: descUnit,
+                        frete: freteRateadoUnit,
+                        ipi: ipiUnit,
+                        nfe: String(nf.numero),
+                        fornecedor: nf.contato?.nome,
+                        loja: nomeLoja
+                    }, { onConflict: 'id_bling,sku' });
+                }
+                console.log(`✅ Compra ${nf.numero} calculada e processada.`);
+            } else {
+                await supabase.from('entradas_compras').delete().eq('id_bling', idBling);
+            }
+        }
+        else {
+          // Limpeza geral (Canceladas, Denegadas, etc em qualquer tipo de nota)
+          await supabase.from('nfe_saida').delete().eq('id', idBling);
+          await supabase.from('devolucoes').delete().eq('id', idBling);
+          await supabase.from('entradas_compras').delete().eq('id_bling', idBling); // Adicionado para compras
+        }
+      }
+    }
+
+    // D) PRODUTOS E COMPOSIÇÕES
+    else if (event.includes('product.')) {
+      const respBling = await fetch(`https://www.bling.com.br/Api/v3/produtos/${idBling}`, { 
+        headers: { "Authorization": `Bearer ${token}` } 
+      });
+
+      if (respBling.ok) {
+        const { data: p } = await respBling.json();
+        const skuPai = p.codigo;
+        const colIdLoja = `id_bling_${nomeLoja.toLowerCase().replace('_', '')}`;
+
+        // 1. Salva/Atualiza o Produto Principal primeiro (garante a FK do sku_pai)
+        await supabase.from('produtos').upsert({ 
+          sku: skuPai, 
+          nome: p.nome, 
+          custo_fixo: p.fornecedor?.precoCusto || 0, 
+          preco_venda_padrao: p.preco, 
+          tipo: p.tipo, 
+          situacao: p.situacao,
+          formato: p.formato, 
+          gtin: p.gtin, 
+          fornecedor: p.fornecedor?.contato?.nome || null,
+          categoria_id: p.categoria?.id || null, 
+          [colIdLoja]: idBling 
+        }, { onConflict: 'sku' });
+
+        // 2. Processamento da Estrutura (Composição)
+        const componentes = p.estrutura?.componentes || [];
+
+        if (componentes.length > 0) {
+          // A. Limpa composições antigas para evitar duplicidade/lixo
+          await supabase.from('composicoes').delete().eq('sku_pai', skuPai);
+
+          // B. Mapeia os componentes para buscar os SKUs dos filhos no nosso banco
+          for (const comp of componentes) {
+            const idBlingFilho = comp.produto.id;
+            const qtdFilho = comp.quantidade;
+
+            // Busca o SKU do filho no banco de dados usando o ID do Bling
+            const { data: produtoFilho } = await supabase
+              .from('produtos')
+              .select('sku')
+              .eq(colIdLoja, idBlingFilho)
+              .single();
+
+            if (produtoFilho) {
+              await supabase.from('composicoes').upsert({
+                sku_pai: skuPai,
+                sku_filho: produtoFilho.sku,
+                quantidade_filho: qtdFilho
+              });
+            } else {
+              console.warn(`⚠️ SKU Filho não encontrado para ID Bling ${idBlingFilho}. O componente foi ignorado.`);
+            }
+          }
+          console.log(`✅ Composição de ${skuPai} sincronizada (${componentes.length} itens).`);
+        } else {
+          // Se o produto não tem estrutura mas tinha antes, limpamos
+          await supabase.from('composicoes').delete().eq('sku_pai', skuPai);
+        }
+      }
+    }
+
+    return new Response("OK", { status: 200 });
+  } catch (e) {
+    console.error("❌ ERRO WEBHOOK:", e.message);
+    return new Response(e.message, { status: 500 });
+  }
+});

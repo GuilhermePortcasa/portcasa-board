@@ -1,0 +1,33 @@
+name: Sincronização Diária de Pedidos de Compra
+
+on:
+  schedule:
+    # Roda todos os dias às 04:00 AM (Horário de Brasília seria 07:00 UTC)
+    - cron: '0 7 * * *'
+  workflow_dispatch: # Permite rodar manualmente pelo botão no GitHub
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout código
+        uses: actions/checkout@v3
+
+      - name: Configurar Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Instalar dependências
+        run: pip install requests
+
+      - name: Executar Script de Sincronização
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          # Adicione aqui todos os IDs e Secrets do Bling que estão no seu .env
+          BLING_CLIENT_ID_PORTFIO: ${{ secrets.BLING_CLIENT_ID_PORTFIO }}
+          BLING_SECRET_PORTFIO: ${{ secrets.BLING_SECRET_PORTFIO }}
+          BLING_CLIENT_ID_PORTCASA: ${{ secrets.BLING_CLIENT_ID_PORTCASA }}
+          BLING_SECRET_PORTCASA: ${{ secrets.BLING_SECRET_PORTCASA }}
+        run: python scripts/sync_pedidos_compra.py
