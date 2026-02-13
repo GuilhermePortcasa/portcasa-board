@@ -16,7 +16,14 @@ BLACKLIST_FORNECEDORES = [
 # Cache para evitar consultas repetitivas de nome de fornecedor
 cache_fornecedores = {}
 
+def limpar_data(data_str):
+    """Converte datas inválidas do Bling para None (NULL no banco)"""
+    if not data_str or data_str == "0000-00-00":
+        return None
+    return data_str
+
 def get_nome_fornecedor(service, id_fornecedor):
+    if not id_fornecedor: return "FORNECEDOR NAO INFORMADO"
     if id_fornecedor in cache_fornecedores:
         return cache_fornecedores[id_fornecedor]
     
@@ -48,7 +55,6 @@ def processar_pedidos_compra(loja_nome):
     print(f"\n🚀 Iniciando Sincronização TOTAL: {loja_nome}")
     service = BlingService(loja_nome)
     
-    # Sem filtro de data para pegar todo o histórico
     params = {"limite": 100}
 
     try:
@@ -61,7 +67,7 @@ def processar_pedidos_compra(loja_nome):
                     continue
 
                 try:
-                    time.sleep(0.05) # Rate limit protection
+                    time.sleep(0.05)
                     token = service.get_valid_token()
                     resp = requests.get(
                         f"https://www.bling.com.br/Api/v3/pedidos/compras/{p_resumo['id']}", 
@@ -70,26 +76,21 @@ def processar_pedidos_compra(loja_nome):
                     if resp.status_code != 200: continue
                     p = resp.json().get('data')
                     
-                    # 1. Identificação do Fornecedor
                     id_forn = p.get('fornecedor', {}).get('id')
                     fornecedor_nome = get_nome_fornecedor(service, id_forn).upper()
                     
-                    # 2. Filtro de Blacklist para Atendidos
                     if sit_valor == VALOR_SIT_ATENDIDO and any(b in fornecedor_nome for b in BLACKLIST_FORNECEDORES):
                         continue
 
-                    # 3. Matemática de Rateio
                     val_frete = p.get('transporte', {}).get('frete', 0)
                     val_ipi_total = p.get('tributacao', {}).get('totalIPI', 0)
                     
-                    # Trata desconto (Pode ser valor fixo ou porcentagem no Bling)
                     desc_info = p.get('desconto', {})
                     val_desc_total = desc_info.get('valor', 0)
                     if desc_info.get('unidade') == 'PERCENTUAL':
                         val_desc_total = (p.get('totalProdutos', 0) * val_desc_total) / 100
 
                     itens = p.get('itens', [])
-                    # Soma bruta manual para garantir precisão do peso
                     soma_prod_bruta = sum([i['valor'] * i['quantidade'] for i in itens]) or 1
 
                     for item in itens:
@@ -98,19 +99,21 @@ def processar_pedidos_compra(loja_nome):
 
                         qtd = item['quantidade']
                         v_unit = item['valor']
-                        valor_total_item = v_unit * qtd
-                        peso_relativo = valor_total_item / soma_prod_bruta
+                        peso_relativo = (v_unit * qtd) / soma_prod_bruta
                         
-                        # Rateio proporcional baseado no valor do item
                         frete_un = (val_frete * peso_relativo) / qtd if qtd > 0 else 0
                         desc_un = (val_desc_total * peso_relativo) / qtd if qtd > 0 else 0
                         ipi_un = (val_ipi_total * peso_relativo) / qtd if qtd > 0 else 0
 
+                        # --- CORREÇÃO APLICADA AQUI ---
+                        data_pedido = limpar_data(p.get('data'))
+                        data_prevista = limpar_data(p.get('dataPrevista'))
+
                         buffer.append({
                             "id_pedido": p['id'],
                             "sku": sku,
-                            "data_pedido": p['data'],
-                            "data_prevista": p.get('dataPrevista'),
+                            "data_pedido": data_pedido,
+                            "data_prevista": data_prevista,
                             "quantidade": qtd,
                             "preco_unitario": v_unit,
                             "desconto": desc_un,
