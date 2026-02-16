@@ -148,22 +148,46 @@ Deno.serve(async (req) => {
         const eSituacaoValidaPadrao = !IDS_NFE_IGNORAR.includes(nf.situacao);
 
         // --- ROTA 1: VENDA (Saída Tipo 1) ---
-        // Aqui seguimos a regra padrão: deve ser Autorizada e Série 1
         if (nf.tipo === 1 && eSerie1 && eSituacaoValidaPadrao && !IDS_NATUREZA_BLOQUEADA.includes(natId)) {
           const itens = nf.itens || [];
-          let totalItens = itens.reduce((acc, i) => acc + (i.valorUnitario * i.quantidade), 0) || 1;
-          const valDescCalc = Math.max(0, (totalItens + (nf.valorFrete || 0) + (nf.outrasDespesas || 0)) - (nf.valorNota || 0));
+          
+          // CORREÇÃO: Usa 'valor' (padrão NFe V3) ou 'valorUnitario' (fallback)
+          let totalItens = itens.reduce((acc, i) => {
+             const preco = i.valor || i.valorUnitario || 0;
+             return acc + (preco * i.quantidade);
+          }, 0);
+          
+          if (totalItens === 0) totalItens = 1; // Evita divisão por zero
+
+          // Cálculos Totais da Nota
+          const vFrete = nf.valorFrete || 0;
+          const vOutras = nf.outrasDespesas || 0;
+          const vNota = nf.valorNota || 0;
+          
+          // Cálculo do Desconto Global Rateado
+          // (Soma Produtos + Frete + Outras) - Valor Final da Nota = Desconto
+          const valDescCalc = Math.max(0, (totalItens + vFrete + vOutras) - vNota);
 
           for (const item of itens) {
-            const peso = (item.valorUnitario * item.quantidade) / totalItens;
+            // CORREÇÃO: Pega o preço correto
+            const precoUnitario = item.valor || item.valorUnitario || 0;
+            
+            const peso = (precoUnitario * item.quantidade) / totalItens;
+            
             await supabase.from('nfe_saida').upsert({
-              id: idBling, sku: item.codigo, data_emissao: nf.dataEmissao.substring(0, 10),
-              origem: nomeLoja === 'CASA_MODELO' ? 'CASA_MODELO' : 'SITE', loja: nomeLoja,
-              quantidade: item.quantidade, preco_unitario: item.valorUnitario,
-              desconto: (valDescCalc * peso) / item.quantidade, frete: ((nf.valorFrete || 0) * peso) / item.quantidade
+              id: idBling, 
+              sku: item.codigo, 
+              data_emissao: nf.dataEmissao.substring(0, 10),
+              origem: nomeLoja === 'CASA_MODELO' ? 'CASA_MODELO' : 'SITE', 
+              loja: nomeLoja,
+              quantidade: item.quantidade, 
+              preco_unitario: precoUnitario, // <--- Aqui estava o erro
+              desconto: (valDescCalc * peso) / item.quantidade, 
+              frete: (vFrete * peso) / item.quantidade
             });
           }
-        } 
+          console.log(`✅ NFe Venda ${idBling} processada com sucesso.`);
+        }
         
         // --- ROTA 2: DEVOLUÇÃO (Entrada Tipo 0) ---
         else if (nf.tipo === 0 && IDS_NATUREZA_DEVOLUCAO.includes(natId)) {
@@ -303,12 +327,12 @@ Deno.serve(async (req) => {
 
       if (respBling.ok) {
         const { data: p } = await respBling.json();
-        const skuPai = p.codigo;
+        const skuPrincipal = p.codigo;
         const colIdLoja = `id_bling_${nomeLoja.toLowerCase().replace('_', '')}`;
 
-        // 1. Salva/Atualiza o Produto Principal primeiro (garante a FK do sku_pai)
-        await supabase.from('produtos').upsert({ 
-          sku: skuPai, 
+        // 1. Salva o Produto do Webhook (Seja Pai ou Filho - aqui os dados são sempre confiáveis)
+        const dadosPrincipais = { 
+          sku: skuPrincipal, 
           nome: p.nome, 
           custo_fixo: p.fornecedor?.precoCusto || 0, 
           preco_venda_padrao: p.preco, 
@@ -319,21 +343,56 @@ Deno.serve(async (req) => {
           fornecedor: p.fornecedor?.contato?.nome || null,
           categoria_id: p.categoria?.id || null, 
           [colIdLoja]: idBling 
-        }, { onConflict: 'sku' });
+        };
 
-        // 2. Processamento da Estrutura (Composição)
+        await supabase.from('produtos').upsert(dadosPrincipais, { onConflict: 'sku' });
+        console.log(`✅ Produto ${skuPrincipal} atualizado (Webhook Direto).`);
+
+        // 2. Se for PAI, verifica os filhos com CUIDADO para não zerar dados
+        if (p.variacoes && p.variacoes.length > 0) {
+            for (const v of p.variacoes) {
+                // LÓGICA DE PROTEÇÃO:
+                // Só atualiza o filho via "tabela do pai" se tivermos dados relevantes.
+                // Se o preço vier 0, ignoramos para não sobrescrever o webhook individual do filho que traz o preço real.
+                
+                const custoFilho = v.fornecedor?.precoCusto || p.fornecedor?.precoCusto || 0;
+                const precoFilho = v.preco || 0;
+
+                // Se preço E custo forem zero, provavelmente é um dado incompleto do array pai. Pula.
+                if (precoFilho === 0 && custoFilho === 0) {
+                   // console.log(`⏭️ Ignorando update do filho ${v.codigo} via pai (dados zerados).`);
+                   continue;
+                }
+
+                await supabase.from('produtos').upsert({
+                    sku: v.codigo,
+                    nome: v.nome,
+                    custo_fixo: custoFilho,
+                    preco_venda_padrao: precoFilho, 
+                    tipo: v.tipo,
+                    situacao: v.situacao,
+                    formato: v.formato,
+                    gtin: v.gtin,
+                    fornecedor: v.fornecedor?.contato?.nome || p.fornecedor?.contato?.nome || null,
+                    categoria_id: v.categoria?.id || p.categoria?.id || null,
+                    [colIdLoja]: v.id 
+                }, { onConflict: 'sku' });
+            }
+        }
+
+        // 3. Processamento da Estrutura (Kits/Composições)
+        // Só roda se o produto tiver estrutura definida
         const componentes = p.estrutura?.componentes || [];
 
         if (componentes.length > 0) {
-          // A. Limpa composições antigas para evitar duplicidade/lixo
-          await supabase.from('composicoes').delete().eq('sku_pai', skuPai);
+          // Limpa composições antigas desse pai
+          await supabase.from('composicoes').delete().eq('sku_pai', skuPrincipal);
 
-          // B. Mapeia os componentes para buscar os SKUs dos filhos no nosso banco
           for (const comp of componentes) {
             const idBlingFilho = comp.produto.id;
             const qtdFilho = comp.quantidade;
 
-            // Busca o SKU do filho no banco de dados usando o ID do Bling
+            // Busca o SKU do componente
             const { data: produtoFilho } = await supabase
               .from('produtos')
               .select('sku')
@@ -342,18 +401,19 @@ Deno.serve(async (req) => {
 
             if (produtoFilho) {
               await supabase.from('composicoes').upsert({
-                sku_pai: skuPai,
+                sku_pai: skuPrincipal,
                 sku_filho: produtoFilho.sku,
                 quantidade_filho: qtdFilho
               });
-            } else {
-              console.warn(`⚠️ SKU Filho não encontrado para ID Bling ${idBlingFilho}. O componente foi ignorado.`);
             }
           }
-          console.log(`✅ Composição de ${skuPai} sincronizada (${componentes.length} itens).`);
+          console.log(`🧩 Composição de ${skuPrincipal} sincronizada.`);
         } else {
-          // Se o produto não tem estrutura mas tinha antes, limpamos
-          await supabase.from('composicoes').delete().eq('sku_pai', skuPai);
+           // Se não veio estrutura, garantimos que não existe lixo no banco
+           // Mas CUIDADO: Variações simples não têm estrutura, então só deletamos se tiver certeza que era pra ter
+           // Para segurança, deletamos apenas se o tipo for 'C' (Conjunto) ou se soubermos que mudou.
+           // Na dúvida, o delete abaixo garante que se deixou de ser kit, limpa o banco.
+           await supabase.from('composicoes').delete().eq('sku_pai', skuPrincipal);
         }
       }
     }

@@ -1,3 +1,4 @@
+import os
 import requests
 import time
 from bling_service import BlingService, SUPABASE_URL, SUPABASE_KEY
@@ -21,7 +22,17 @@ BLACKLIST_FORNECEDORES = [
 cache_fornecedores = {}
 
 def limpar_data(data_str):
-    if not data_str or data_str == "0000-00-00": return None
+    """
+    Limpa e padroniza a data para YYYY-MM-DD.
+    Aceita: '2026-02-16', '2026-02-16T13:48:15...', '0000-00-00'
+    """
+    if not data_str or str(data_str).startswith("0000"): 
+        return None
+    
+    # Se vier com hora (T), pega só a data (primeiros 10 chars)
+    if "T" in str(data_str):
+        return data_str[:10]
+        
     return data_str
 
 def get_nome_fornecedor(service, id_fornecedor):
@@ -44,13 +55,16 @@ def operacao_banco(metodo, tabela, dados=None, params=None):
     }
     url = f"{SUPABASE_URL}/rest/v1/{tabela}"
     
-    if metodo == "POST":
-        r = requests.post(url, headers=headers, json=dados)
-    elif metodo == "DELETE":
-        r = requests.delete(f"{url}?{params}", headers=headers)
-        
-    if r.status_code not in [200, 201, 204]:
-        print(f"      ❌ Erro Supabase ({metodo}): {r.text}")
+    try:
+        if metodo == "POST":
+            r = requests.post(url, headers=headers, json=dados)
+        elif metodo == "DELETE":
+            r = requests.delete(f"{url}?{params}", headers=headers)
+            
+        if r.status_code not in [200, 201, 204]:
+            print(f"      ❌ Erro Supabase ({metodo}): {r.text}")
+    except Exception as e:
+        print(f"      ❌ Erro Conexão Supabase: {e}")
 
 def processar_loja(loja_nome):
     print(f"\n🚀 Sincronizando {loja_nome}...")
@@ -60,7 +74,10 @@ def processar_loja(loja_nome):
     params = {"limite": 100} 
     
     try:
+        # Pega todas as páginas de pedidos de compra
         for lote in service.get_all_pages("/pedidos/compras", params=params):
+            if not lote: continue
+
             # Dicionário temporário para agrupar itens duplicados no mesmo pedido
             # Chave: (id_pedido, sku) -> Valor: Objeto consolidado
             itens_consolidados = {}
@@ -73,11 +90,16 @@ def processar_loja(loja_nome):
                     continue
 
                 try:
-                    time.sleep(0.05)
+                    time.sleep(0.05) # Rate limit preventivo
                     token = service.get_valid_token()
                     resp = requests.get(f"https://www.bling.com.br/Api/v3/pedidos/compras/{id_pedido}", headers={"Authorization": f"Bearer {token}"})
-                    if resp.status_code != 200: continue
+                    
+                    if resp.status_code != 200: 
+                        print(f"   ⚠️ Erro ao baixar pedido {id_pedido}: {resp.status_code}")
+                        continue
+                        
                     p = resp.json().get('data')
+                    if not p: continue
                     
                     id_forn = p.get('fornecedor', {}).get('id')
                     nome_forn = get_nome_fornecedor(service, id_forn)
@@ -89,31 +111,36 @@ def processar_loja(loja_nome):
                     ids_processados_agora.add(id_pedido)
 
                     # Cálculos Totais da Nota para Rateio
-                    val_frete_nota = p.get('transporte', {}).get('frete', 0)
-                    val_ipi_nota = p.get('tributacao', {}).get('totalIPI', 0)
+                    val_frete_nota = p.get('transporte', {}).get('frete', 0) or 0
+                    val_ipi_nota = p.get('tributacao', {}).get('totalIPI', 0) or 0
                     
                     desc_obj = p.get('desconto', {})
-                    val_desc_nota = desc_obj.get('valor', 0)
+                    val_desc_nota = desc_obj.get('valor', 0) or 0
                     if desc_obj.get('unidade') == 'PERCENTUAL':
                         val_desc_nota = (p.get('totalProdutos', 0) * val_desc_nota) / 100
 
                     itens = p.get('itens', [])
-                    soma_bruta_nota = sum([i['valor'] * i['quantidade'] for i in itens]) or 1
+                    if not itens: continue
+
+                    soma_bruta_nota = sum([(i.get('valor', 0) or 0) * (i.get('quantidade', 0) or 0) for i in itens])
+                    if soma_bruta_nota == 0: soma_bruta_nota = 1
 
                     for item in itens:
                         sku = item.get('produto', {}).get('codigo', '').strip()
                         if not sku: continue
 
-                        qtd = float(item['quantidade']) # Garante float para não dar erro
-                        v_unit = float(item['valor'])
+                        qtd = float(item.get('quantidade', 0) or 0)
+                        v_unit = float(item.get('valor', 0) or 0)
                         
+                        if qtd <= 0: continue
+
                         # Peso deste item na nota
                         peso = (v_unit * qtd) / soma_bruta_nota
                         
                         # Valores Unitários Calculados
-                        desc_un = (val_desc_nota * peso) / qtd if qtd else 0
-                        frete_un = (val_frete_nota * peso) / qtd if qtd else 0
-                        ipi_un = (val_ipi_nota * peso) / qtd if qtd else 0
+                        desc_un = (val_desc_nota * peso) / qtd
+                        frete_un = (val_frete_nota * peso) / qtd
+                        ipi_un = (val_ipi_nota * peso) / qtd
 
                         chave_unica = (id_pedido, sku)
 
@@ -139,20 +166,18 @@ def processar_loja(loja_nome):
                             qtd_antiga = existente["quantidade"]
                             qtd_nova = qtd_antiga + qtd
                             
-                            # Média Ponderada do Preço
-                            existente["preco_unitario"] = ((existente["preco_unitario"] * qtd_antiga) + (v_unit * qtd)) / qtd_nova
+                            # Evita divisão por zero se qtd_nova for 0 (improvável aqui, mas seguro)
+                            if qtd_nova > 0:
+                                # Média Ponderada do Preço e Custos
+                                existente["preco_unitario"] = ((existente["preco_unitario"] * qtd_antiga) + (v_unit * qtd)) / qtd_nova
+                                existente["desconto"] = ((existente["desconto"] * qtd_antiga) + (desc_un * qtd)) / qtd_nova
+                                existente["frete"] = ((existente["frete"] * qtd_antiga) + (frete_un * qtd)) / qtd_nova
+                                existente["ipi"] = ((existente["ipi"] * qtd_antiga) + (ipi_un * qtd)) / qtd_nova
+                                existente["quantidade"] = qtd_nova
                             
-                            # Média Ponderada dos Custos Extras
-                            existente["desconto"] = ((existente["desconto"] * qtd_antiga) + (desc_un * qtd)) / qtd_nova
-                            existente["frete"] = ((existente["frete"] * qtd_antiga) + (frete_un * qtd)) / qtd_nova
-                            existente["ipi"] = ((existente["ipi"] * qtd_antiga) + (ipi_un * qtd)) / qtd_nova
-                            
-                            # Atualiza quantidade final
-                            existente["quantidade"] = qtd_nova
-                            
-                            print(f"      🔄 SKU {sku} duplicado no pedido {p['numero']}. Consolidado: Qtd {qtd_nova}")
+                            print(f"      🔄 SKU {sku} duplicado no pedido {p.get('numero')}. Consolidado: Qtd {qtd_nova}")
 
-                    print(f"   ✅ Processado: {p['numero']} - {nome_forn}")
+                    print(f"   ✅ Processado: {p.get('numero')} - {nome_forn}")
 
                 except Exception as e_item:
                     print(f"   ⚠️ Erro item {id_pedido}: {e_item}")
@@ -165,23 +190,25 @@ def processar_loja(loja_nome):
         if ids_processados_agora:
             print("🧹 Iniciando limpeza de pedidos obsoletos...")
             try:
+                # Busca IDs existentes no banco para esta loja
                 r_banco = requests.get(
                     f"{SUPABASE_URL}/rest/v1/compras_pedidos?select=id_pedido&loja=eq.{loja_nome}", 
                     headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
                 )
-                ids_banco = set([row['id_pedido'] for row in r_banco.json()])
-                ids_para_remover = ids_banco - ids_processados_agora
-                
-                if ids_para_remover:
-                    print(f"   🗑️ Removendo {len(ids_para_remover)} pedidos antigos/cancelados...")
-                    lista_remocao = list(ids_para_remover)
-                    batch_size = 50
-                    for i in range(0, len(lista_remocao), batch_size):
-                        lote_ids = lista_remocao[i:i+batch_size]
-                        ids_str = ",".join(map(str, lote_ids))
-                        operacao_banco("DELETE", "compras_pedidos", params=f"id_pedido=in.({ids_str})")
-                else:
-                    print("   ✨ Nenhum pedido para remover.")
+                if r_banco.status_code == 200:
+                    ids_banco = set([row['id_pedido'] for row in r_banco.json()])
+                    ids_para_remover = ids_banco - ids_processados_agora
+                    
+                    if ids_para_remover:
+                        print(f"   🗑️ Removendo {len(ids_para_remover)} pedidos antigos/cancelados...")
+                        lista_remocao = list(ids_para_remover)
+                        batch_size = 50
+                        for i in range(0, len(lista_remocao), batch_size):
+                            lote_ids = lista_remocao[i:i+batch_size]
+                            ids_str = ",".join(map(str, lote_ids))
+                            operacao_banco("DELETE", "compras_pedidos", params=f"id_pedido=in.({ids_str})")
+                    else:
+                        print("   ✨ Nenhum pedido para remover.")
             except Exception as e_limp:
                 print(f"   ⚠️ Erro na limpeza: {e_limp}")
 
@@ -189,5 +216,9 @@ def processar_loja(loja_nome):
         print(f"❌ Erro geral {loja_nome}: {e}")
 
 if __name__ == "__main__":
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        print("❌ Erro: SUPABASE_URL e SUPABASE_KEY são obrigatórios.")
+        exit(1)
+        
     for loja in ["PORTFIO", "PORTCASA"]:
         processar_loja(loja)

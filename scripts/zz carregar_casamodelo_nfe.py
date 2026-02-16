@@ -3,21 +3,21 @@ import time
 from datetime import datetime
 from bling_service import BlingService, SUPABASE_URL, SUPABASE_KEY
 
-# --- CONFIGURAÇÕES CASA MODELO ---
+# --- CONFIGURAÇÕES ---
 LOJA_NOME = "CASA_MODELO"
 ORIGEM_DESTINO = "CASA_MODELO"
 
-# ⚠️ COLOQUE AQUI OS IDS QUE VOCÊ DESCOBRIU NO PASSO 1
+# Naturezas que NÃO devem entrar (Devoluções de compra, Remessas, etc)
 IDS_NATUREZA_BLOQUEADA = [15108547530, 15108547532]
 
-# Situações Válidas (Diferente de Pendente/Cancelada/etc)
-# 5: Autorizada, 6: Emitida DANFE, 7: Registrada, 13: Autorizada (Correção)
-SITUACOES_VALIDAS = [5, 6, 7, 13] 
+# Período de Repescagem
+DATA_INICIO = "2026-02-13" # Sexta-feira
+DATA_FIM = datetime.now().strftime("%Y-%m-%d") # Hoje
 
-def salvar_nfs(lote):
+def salvar_lote_supabase(lote):
     if not lote: return
     
-    # Agrupa itens duplicados (mesmo ID e SKU na mesma nota)
+    # Remove duplicatas (mesmo ID e SKU)
     itens_unicos = {}
     for item in lote:
         chave = (item['id'], item['sku'])
@@ -25,6 +25,7 @@ def salvar_nfs(lote):
             itens_unicos[chave]['quantidade'] += item['quantidade']
         else:
             itens_unicos[chave] = item.copy()
+            
     lote_limpo = list(itens_unicos.values())
 
     headers = {
@@ -33,100 +34,118 @@ def salvar_nfs(lote):
         "Prefer": "resolution=merge-duplicates", 
         "Content-Type": "application/json"
     }
+    
     r = requests.post(f"{SUPABASE_URL}/rest/v1/nfe_saida", headers=headers, json=lote_limpo)
     
     if r.status_code not in [200, 201, 204]:
         print(f"   ❌ Erro Supabase: {r.text}")
     else:
-        print(f"   ✅ Lote de {len(lote_limpo)} itens salvo.")
+        print(f"   ✅ Lote de {len(lote_limpo)} notas salvo/atualizado.")
 
-def carregar_nfe_casamodelo(ano_inicio=2025):
-    print(f"📦 Iniciando Carga NFe CASA MODELO ({ano_inicio})...")
+def repescagem_casamodelo():
+    print(f"🎣 Iniciando Repescagem {LOJA_NOME} de {DATA_INICIO} a {DATA_FIM}...")
     service = BlingService(LOJA_NOME)
-    hoje = datetime.now()
     
-    for ano in range(ano_inicio, hoje.year + 1):
-        d_ini = f"{ano}-01-01 00:00:00"
-        d_fim = f"{ano}-12-31 23:59:59"
-        if ano == hoje.year: d_fim = hoje.strftime("%Y-%m-%d 23:59:59")
+    pagina = 1
+    tem_dados = True
+    
+    while tem_dados:
+        print(f"📥 Baixando página {pagina}...")
         
-        print(f"📅 Processando Ano: {ano}")
-        
-        # Filtra por tipo=1 (Saída) e situações válidas
+        # Filtra apenas NFs de Saída emitidas no período
         params = {
-            "dataEmissaoInicial": d_ini, 
-            "dataEmissaoFinal": d_fim, 
+            "pagina": pagina,
+            "limite": 100,
             "tipo": 1, 
-            "idsSituacoes[]": SITUACOES_VALIDAS,
-            "limite": 100
+            "dataEmissaoInicial": f"{DATA_INICIO} 00:00:00",
+            "dataEmissaoFinal": f"{DATA_FIM} 23:59:59"
         }
 
         try:
-            for lote in service.get_all_pages("/nfe", params=params):
-                buffer = []
-                for nf_resumo in lote:
-                    try:
-                        time.sleep(0.06) 
-                        url_detalhe = f"https://www.bling.com.br/Api/v3/nfe/{nf_resumo['id']}"
-                        resp = requests.get(url_detalhe, headers={"Authorization": f"Bearer {service.get_valid_token()}"})
+            resp = requests.get(
+                "https://www.bling.com.br/Api/v3/nfe",
+                headers={"Authorization": f"Bearer {service.get_valid_token()}"},
+                params=params
+            )
+            
+            if resp.status_code != 200:
+                print(f"❌ Erro API Bling: {resp.status_code} - {resp.text}")
+                break
 
-                        if resp.status_code != 200: continue
-                        nf = resp.json().get('data')
-                        if not nf: continue
+            lote_nfs = resp.json().get('data', [])
+            if not lote_nfs:
+                tem_dados = False
+                print("🏁 Fim das páginas.")
+                break
 
-                        # Filtros Extras
-                        if str(nf.get('serie', '')).strip() != "1": continue # Apenas Série 1
-                        if nf.get('naturezaOperacao', {}).get('id') in IDS_NATUREZA_BLOQUEADA: continue
+            buffer = []
+            
+            for nf_resumo in lote_nfs:
+                # Ignora notas canceladas (2) ou denegadas (4)
+                if nf_resumo['situacao'] in [2, 4]: continue 
 
-                        itens = nf.get('itens', [])
-                        if not itens: continue
-
-                        # --- CÁLCULO REVERSO DE DESCONTO (Lógica Corrigida) ---
-                        val_frete_total = nf.get('valorFrete', 0) or 0
-                        val_seguro = nf.get('valorSeguro', 0) or 0
-                        val_outras = nf.get('outrasDespesas', 0) or 0
-                        val_nota_final = nf.get('valorNota', 0) or 0
-                        
-                        soma_produtos = sum((i.get('valorUnitario', 0) or i.get('valor', 0)) * i['quantidade'] for i in itens)
-                        if soma_produtos == 0: soma_produtos = 1
-
-                        # Desconto é a diferença entre o que deveria ser cobrado e o que foi cobrado
-                        total_esperado = soma_produtos + val_frete_total + val_seguro + val_outras
-                        val_desc_calculado = total_esperado - val_nota_final
-                        if val_desc_calculado < 0: val_desc_calculado = 0
-
-                        for item in itens:
-                            preco = item.get('valorUnitario', 0) or item.get('valor', 0) or 0
-                            
-                            # Peso e Rateio
-                            valor_item_total = preco * item['quantidade']
-                            peso_item = valor_item_total / soma_produtos
-
-                            desc_item_total = val_desc_calculado * peso_item
-                            frete_item_total = val_frete_total * peso_item
-
-                            desc_unit = desc_item_total / item['quantidade']
-                            frete_unit = frete_item_total / item['quantidade']
-
-                            buffer.append({
-                                "id": nf['id'], 
-                                "sku": item['codigo'], 
-                                "data_emissao": nf['dataEmissao'][:10],
-                                "origem": ORIGEM_DESTINO, 
-                                "loja": LOJA_NOME,
-                                "quantidade": item.get('quantidade', 0),
-                                "preco_unitario": preco, 
-                                "desconto": desc_unit, 
-                                "frete": frete_unit
-                            })
-                    except Exception as e:
-                        print(f"   ⚠️ Erro na NF {nf_resumo.get('id')}: {e}")
-
-                if buffer:
-                    salvar_nfs(buffer)
+                try:
+                    time.sleep(0.35) 
                     
+                    resp_det = requests.get(
+                        f"https://www.bling.com.br/Api/v3/nfe/{nf_resumo['id']}", 
+                        headers={"Authorization": f"Bearer {service.get_valid_token()}"}
+                    )
+                    
+                    if resp_det.status_code != 200: continue
+                    nf = resp_det.json().get('data')
+                    
+                    # Filtro de Natureza
+                    nat_id = nf.get('naturezaOperacao', {}).get('id')
+                    if nat_id in IDS_NATUREZA_BLOQUEADA: continue
+                    
+                    # Filtro de Série (Opcional, mas recomendado para Casa Modelo)
+                    # if str(nf.get('serie', '')).strip() != "1": continue
+
+                    itens = nf.get('itens', [])
+                    if not itens: continue
+
+                    # --- LÓGICA DE CÁLCULO (Mesma do Webhook) ---
+                    val_frete_total = nf.get('valorFrete', 0) or 0
+                    val_outras = nf.get('outrasDespesas', 0) or 0
+                    val_nota_final = nf.get('valorNota', 0) or 0
+                    
+                    soma_produtos = sum((i.get('valor', 0) or i.get('valorUnitario', 0)) * i['quantidade'] for i in itens)
+                    if soma_produtos == 0: soma_produtos = 1
+
+                    total_esperado = soma_produtos + val_frete_total + val_outras
+                    val_desc_calculado = max(0, total_esperado - val_nota_final)
+
+                    for item in itens:
+                        preco = item.get('valor', 0) or item.get('valorUnitario', 0) or 0
+                        peso = (preco * item['quantidade']) / soma_produtos
+                        
+                        desc_rateio = (val_desc_calculado * peso) / item['quantidade']
+                        frete_rateio = (val_frete_total * peso) / item['quantidade']
+
+                        buffer.append({
+                            "id": nf['id'], 
+                            "sku": item['codigo'], 
+                            "data_emissao": nf['dataEmissao'][:10],
+                            "origem": ORIGEM_DESTINO, 
+                            "loja": LOJA_NOME,
+                            "quantidade": item['quantidade'],
+                            "preco_unitario": preco, 
+                            "desconto": desc_rateio, 
+                            "frete": frete_rateio    
+                        })
+
+                except Exception as e:
+                    print(f"⚠️ Erro ao processar NF {nf_resumo['id']}: {e}")
+
+            if buffer:
+                salvar_lote_supabase(buffer)
+            
+            pagina += 1
+
         except Exception as e_page:
-            print(f"❌ Erro crítico no ano {ano}: {e_page}")
+            print(f"❌ Erro fatal na página {pagina}: {e_page}")
+            time.sleep(5)
 
 if __name__ == "__main__":
-    carregar_nfe_casamodelo(2025)
+    repescagem_casamodelo()
