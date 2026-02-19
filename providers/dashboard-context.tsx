@@ -142,7 +142,9 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
                 sku: mainSku,
                 nome: key,
                 isParent: true,
-                hasVariations: items.length > 1,
+                
+                hasVariations: items.length > 1 || items.some(i => i.nome.trim() !== (i.nome_pai || "").trim()),
+                
                 children: [],
                 est_total: 0, est_loja: 0, est_site: 0, est_full: 0,
                 val_est_site: 0, val_est_full: 0, val_est_loja: 0,

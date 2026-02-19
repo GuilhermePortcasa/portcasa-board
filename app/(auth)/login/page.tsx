@@ -21,11 +21,7 @@ export default function LoginPage() {
     e.preventDefault()
     setLoading(true)
     setError("")
-
-    // Truque para simplificar o login:
-    // Usuário "admin" vira "admin@portcasa.app"
-    // PIN "1234" vira "1234pc" (para cumprir regra de 6 chars do Supabase)
-    const email = `${username.toLowerCase().trim()}@portcasa.com.br`
+    const email = `${username.toLowerCase().trim()}`
     const password = `${pin}` 
 
     const { error } = await supabase.auth.signInWithPassword({
@@ -52,10 +48,10 @@ export default function LoginPage() {
         <CardContent>
           <form onSubmit={handleLogin} className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="username">Usuário</Label>
+              <Label htmlFor="username">E-mail</Label>
               <Input 
-                id="username" 
-                placeholder="Ex: admin" 
+                id="e-mail" 
+                placeholder="Ex: user@email.com" 
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 autoComplete="off"

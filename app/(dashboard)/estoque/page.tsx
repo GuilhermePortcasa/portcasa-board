@@ -15,6 +15,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import * as XLSX from 'xlsx';
+import { DashboardHeader } from "@/components/header"; // Adicione este import lá em cima
 
 // Formatadores
 const fCurrency = (v: number) => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(v || 0);
@@ -269,17 +270,27 @@ export default function EstoquePage() {
         return <div className="text-[10px] space-x-1"><b>{fNum(v_30)}</b><span className="opacity-60">/{fNum(v_60)}</span><span className="opacity-40">/{fNum(v_90)}</span></div>;
       }
     },
-    { 
+{ 
       header: "Custo Méd", 
       cell: ({ row }) => {
         const custo = row.original.isParent ? (row.original.sum_unit_cost / row.original.count) : row.original.custo_final;
         return (
           <Popover>
-            <PopoverTrigger className="cursor-help hover:text-blue-600 underline decoration-dotted decoration-slate-300 underline-offset-2">{fCurrency(custo)}</PopoverTrigger>
+            <PopoverTrigger className="cursor-help hover:text-blue-600 underline decoration-dotted decoration-slate-300 underline-offset-2">
+              {fCurrency(custo)}
+            </PopoverTrigger>
             <PopoverContent className="w-64 text-xs">
               <div className="font-bold mb-2 border-b pb-1">Composição do Custo</div>
-              <div className="flex justify-between py-1"><span>Custo Calculado:</span> <b>{fCurrency(custo)}</b></div>
-              <div className="flex justify-between py-1 text-slate-500"><span>Última Entrada:</span> <span>{fCurrency(row.original.custo_ult_ent)}</span></div>
+              <div className="flex justify-between py-1">
+                <span>Custo Calculado:</span> <b>{fCurrency(custo)}</b>
+              </div>
+              <div className="flex justify-between py-1 text-slate-500">
+                <span>Última Entrada:</span> <span>{fCurrency(row.original.custo_ult_ent)}</span>
+              </div>
+              {/* NOVA LINHA AQUI: Custo Fixo (que vem do custo_padrao da View) */}
+              <div className="flex justify-between py-1 text-slate-500">
+                <span>Custo Fixo (Padrão):</span> <span>{fCurrency(row.original.custo_padrao)}</span>
+              </div>
             </PopoverContent>
           </Popover>
         );
@@ -329,6 +340,8 @@ const table = useReactTable({
   });
 
   return (
+    <div className="space-y-6"> {/* Cria um espaçamento entre o header e a tabela */}
+    <DashboardHeader />
     <Card className={cn("shadow-xl rounded-xl border-none overflow-hidden flex flex-col transition-all duration-300 bg-white", isFullscreen ? "fixed inset-0 z-50 m-0 rounded-none h-screen w-screen" : "h-[calc(100vh-180px)] relative")}>
       <div className="flex items-center justify-between px-4 py-2 bg-slate-900 border-b border-slate-700 shrink-0">
         <div className="flex items-center gap-4">
@@ -379,5 +392,6 @@ const table = useReactTable({
         </div>
       </div>
     </Card>
+    </div>
   );
 }

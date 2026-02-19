@@ -12,9 +12,8 @@ export const config = {
      * - _next/static (arquivos estáticos)
      * - _next/image (otimização de imagens)
      * - favicon.ico (ícone)
-     * - /login (página de login)
-     * - /auth (rotas de autenticação)
+     * - /auth (rotas de autenticação do Supabase)
      */
-    '/((?!_next/static|_next/image|favicon.ico|login|auth).*)',
+    '/((?!_next/static|_next/image|favicon.ico|auth).*)',
   ],
 }

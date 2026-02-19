@@ -2,8 +2,9 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
+import { createClient } from "@/utils/supabase/client";
 import {
   LayoutDashboard,
   Package,
@@ -13,7 +14,8 @@ import {
   BarChartBig,
   ChevronLeft,
   ChevronRight,
-  LogOut
+  LogOut,
+  User
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -29,7 +31,17 @@ const sidebarItems = [
 
 export function Sidebar() {
   const pathname = usePathname();
+  const router = useRouter();
+  const supabase = createClient();
+  
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+
+  const handleLogout = async () => {
+    setIsLoggingOut(true);
+    await supabase.auth.signOut();
+    router.push("/login"); // Redireciona para a página de login
+  };
 
   return (
     <div 
@@ -91,19 +103,35 @@ export function Sidebar() {
         </ul>
       </nav>
 
-      {/* Footer */}
-      <div className={cn("p-4 border-t text-sm text-muted-foreground h-[60px] flex items-center", isCollapsed && "justify-center")}>
-        {isCollapsed ? (
-           <LogOut className="h-5 w-5" />
-        ) : (
-          <div className="flex items-center gap-2">
-             <div className="h-8 w-8 rounded-full bg-slate-200 flex items-center justify-center">U</div>
-             <div className="flex flex-col">
-                <span className="font-bold text-xs text-slate-700">Usuário</span>
-                <span className="text-[10px]">Sair</span>
-             </div>
-          </div>
-        )}
+      {/* Footer / Botão Sair */}
+      <div className={cn("p-4 border-t text-sm h-[70px] flex items-center", isCollapsed ? "justify-center" : "")}>
+        <button 
+          onClick={handleLogout}
+          disabled={isLoggingOut}
+          title="Sair da conta"
+          className={cn(
+            "w-full flex items-center gap-3 rounded-md transition-all duration-200 text-muted-foreground hover:text-red-600 hover:bg-red-50",
+            isCollapsed ? "justify-center p-2" : "px-3 py-2",
+            isLoggingOut && "opacity-50 cursor-not-allowed"
+          )}
+        >
+          {isCollapsed ? (
+             <LogOut className="h-5 w-5" />
+          ) : (
+            <>
+              <div className="h-8 w-8 rounded-full bg-slate-200 flex items-center justify-center text-slate-500 shrink-0">
+                <User size={16} />
+              </div>
+              <div className="flex flex-col text-left flex-1">
+                <span className="font-bold text-xs text-slate-700">Minha Conta</span>
+                <span className="text-[10px] uppercase font-semibold text-red-500">
+                  {isLoggingOut ? "Saindo..." : "Sair do sistema"}
+                </span>
+              </div>
+              <LogOut className="h-4 w-4 shrink-0 text-red-500/70" />
+            </>
+          )}
+        </button>
       </div>
     </div>
   );

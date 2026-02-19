@@ -33,10 +33,20 @@ export async function updateSession(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser()
 
-  // Proteção de rotas: Se não tiver user e não estiver no login, manda pro login
-  if (!user && !request.nextUrl.pathname.startsWith('/login') && !request.nextUrl.pathname.startsWith('/auth')) {
+  const isLoginPage = request.nextUrl.pathname.startsWith('/login')
+  const isAuthRoute = request.nextUrl.pathname.startsWith('/auth')
+
+  // 1. Se NÃO tem usuário e a rota NÃO é de login nem de auth, redireciona para /login
+  if (!user && !isLoginPage && !isAuthRoute) {
     const url = request.nextUrl.clone()
     url.pathname = '/login'
+    return NextResponse.redirect(url)
+  }
+
+  // 2. Se TEM usuário e ele está tentando acessar o /login, redireciona para /estoque
+  if (user && isLoginPage) {
+    const url = request.nextUrl.clone()
+    url.pathname = '/estoque' // ou '/' dependendo de qual for a sua página principal
     return NextResponse.redirect(url)
   }
 

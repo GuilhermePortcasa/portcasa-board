@@ -22,17 +22,10 @@ BLACKLIST_FORNECEDORES = [
 cache_fornecedores = {}
 
 def limpar_data(data_str):
-    """
-    Limpa e padroniza a data para YYYY-MM-DD.
-    Aceita: '2026-02-16', '2026-02-16T13:48:15...', '0000-00-00'
-    """
     if not data_str or str(data_str).startswith("0000"): 
         return None
-    
-    # Se vier com hora (T), pega só a data (primeiros 10 chars)
     if "T" in str(data_str):
         return data_str[:10]
-        
     return data_str
 
 def get_nome_fornecedor(service, id_fornecedor):
@@ -74,12 +67,9 @@ def processar_loja(loja_nome):
     params = {"limite": 100} 
     
     try:
-        # Pega todas as páginas de pedidos de compra
         for lote in service.get_all_pages("/pedidos/compras", params=params):
             if not lote: continue
 
-            # Dicionário temporário para agrupar itens duplicados no mesmo pedido
-            # Chave: (id_pedido, sku) -> Valor: Objeto consolidado
             itens_consolidados = {}
             
             for p_resumo in lote:
@@ -90,7 +80,7 @@ def processar_loja(loja_nome):
                     continue
 
                 try:
-                    time.sleep(0.05) # Rate limit preventivo
+                    time.sleep(0.05)
                     token = service.get_valid_token()
                     resp = requests.get(f"https://www.bling.com.br/Api/v3/pedidos/compras/{id_pedido}", headers={"Authorization": f"Bearer {token}"})
                     
@@ -110,7 +100,6 @@ def processar_loja(loja_nome):
 
                     ids_processados_agora.add(id_pedido)
 
-                    # Cálculos Totais da Nota para Rateio
                     val_frete_nota = p.get('transporte', {}).get('frete', 0) or 0
                     val_ipi_nota = p.get('tributacao', {}).get('totalIPI', 0) or 0
                     
@@ -134,20 +123,19 @@ def processar_loja(loja_nome):
                         
                         if qtd <= 0: continue
 
-                        # Peso deste item na nota
                         peso = (v_unit * qtd) / soma_bruta_nota
                         
-                        # Valores Unitários Calculados
                         desc_un = (val_desc_nota * peso) / qtd
                         frete_un = (val_frete_nota * peso) / qtd
                         ipi_un = (val_ipi_nota * peso) / qtd
 
                         chave_unica = (id_pedido, sku)
 
-                        # Lógica de Consolidação (Resolve o erro 21000)
                         if chave_unica not in itens_consolidados:
                             itens_consolidados[chave_unica] = {
                                 "id_pedido": id_pedido,
+                                "numero": str(p.get('numero', '')),          # ADICIONADO
+                                "ordem_compra": str(p.get('ordemCompra', '')), # ADICIONADO
                                 "sku": sku,
                                 "data_pedido": limpar_data(p.get('data')),
                                 "data_prevista": limpar_data(p.get('dataPrevista')),
@@ -161,14 +149,11 @@ def processar_loja(loja_nome):
                                 "situacao": SITUACOES_MAP.get(sit_valor, "Outros")
                             }
                         else:
-                            # Se já existe, somamos as quantidades e recalculamos a média ponderada dos custos
                             existente = itens_consolidados[chave_unica]
                             qtd_antiga = existente["quantidade"]
                             qtd_nova = qtd_antiga + qtd
                             
-                            # Evita divisão por zero se qtd_nova for 0 (improvável aqui, mas seguro)
                             if qtd_nova > 0:
-                                # Média Ponderada do Preço e Custos
                                 existente["preco_unitario"] = ((existente["preco_unitario"] * qtd_antiga) + (v_unit * qtd)) / qtd_nova
                                 existente["desconto"] = ((existente["desconto"] * qtd_antiga) + (desc_un * qtd)) / qtd_nova
                                 existente["frete"] = ((existente["frete"] * qtd_antiga) + (frete_un * qtd)) / qtd_nova
@@ -182,15 +167,13 @@ def processar_loja(loja_nome):
                 except Exception as e_item:
                     print(f"   ⚠️ Erro item {id_pedido}: {e_item}")
 
-            # Envia o lote consolidado (sem duplicatas de chave)
             if itens_consolidados:
                 operacao_banco("POST", "compras_pedidos", dados=list(itens_consolidados.values()))
 
-        # 2. LIMPEZA (GARBAGE COLLECTION)
+        # 2. LIMPEZA (GARBAGE COLLECTION) COM OS PRINTS ORIGINAIS
         if ids_processados_agora:
             print("🧹 Iniciando limpeza de pedidos obsoletos...")
             try:
-                # Busca IDs existentes no banco para esta loja
                 r_banco = requests.get(
                     f"{SUPABASE_URL}/rest/v1/compras_pedidos?select=id_pedido&loja=eq.{loja_nome}", 
                     headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
