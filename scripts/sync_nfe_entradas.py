@@ -1,10 +1,14 @@
+import os
 import requests
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from bling_service import BlingService, SUPABASE_URL, SUPABASE_KEY
 
-# --- CONFIGURAÇÕES ---
-DATA_INICIO = "2025-08-07"
+# --- CONFIGURAÇÕES DINÂMICAS ---
+# Busca NFs emitidas nos últimos 7 dias (garante que não perde nada se o script falhar um dia)
+DIAS_RETROATIVOS = 7
+DATA_INICIO = (datetime.now() - timedelta(days=DIAS_RETROATIVOS)).strftime("%Y-%m-%d")
+
 SITUACOES_PADRAO_IGNORAR = [1, 2, 3, 8, 10, 11, 12] 
 
 BLACKLIST_FORNECEDORES = [
@@ -23,7 +27,7 @@ BLACKLIST_FORNECEDORES = [
 CONFIG_LOJAS = [
     {
         "nome": "PORTFIO",
-        "id_loja_permitido": 0, # Compras reais costumam ter ID 0
+        "id_loja_permitido": 0,
         "situacoes_ignorar": SITUACOES_PADRAO_IGNORAR,
         "naturezas_ignorar": [15107012796, 6937065086, 15103347853, 7255067378, 7314982489, 7256147975]
     },
@@ -53,10 +57,11 @@ def salvar_compras(lote):
 
 def processar_loja(config):
     nome_loja = config['nome']
-    print(f"\n🚀 Iniciando compras: {nome_loja}")
+    print(f"\n🚀 Iniciando compras: {nome_loja} (A partir de {DATA_INICIO})")
     service = BlingService(nome_loja)
     blacklist_norm = set([normalizar_texto(x) for x in BLACKLIST_FORNECEDORES])
     
+    # tipo: 0 (Entrada)
     params = {"dataEmissaoInicial": f"{DATA_INICIO} 00:00:00", "tipo": 0, "limite": 100}
     
     try:
@@ -67,7 +72,7 @@ def processar_loja(config):
                 if nf_resumo.get('naturezaOperacao', {}).get('id') in config['naturezas_ignorar']: continue
 
                 try:
-                    time.sleep(0.04)
+                    time.sleep(0.05) # Rate limit Bling
                     url_det = f"https://www.bling.com.br/Api/v3/nfe/{nf_resumo['id']}"
                     token = service.get_valid_token()
                     resp = requests.get(url_det, headers={"Authorization": f"Bearer {token}"})
@@ -76,47 +81,35 @@ def processar_loja(config):
                     nf = resp.json().get('data')
                     if not nf: continue
                     
-                    # 1. FILTRO DE LOJA: Evita devoluções de marketplace
                     if nf.get('loja', {}).get('id') != config['id_loja_permitido']: continue
 
-                    # 2. FILTRO FORNECEDOR (Blacklist)
                     nome_fornecedor = nf.get('contato', {}).get('nome', '')
                     if any(bloqueado in normalizar_texto(nome_fornecedor) for bloqueado in blacklist_norm): continue
 
-                    # --- INÍCIO DA NOVA LÓGICA DE CÁLCULO ---
-
-                    # Dados do cabeçalho da NF para rateio
-                    val_frete_total = nf.get('valorFrete', 0)
-                    val_outras_total = nf.get('outrasDespesas', 0)
+                    val_frete_total = nf.get('valorFrete', 0) or 0
+                    val_outras_total = nf.get('outrasDespesas', 0) or 0
                     
                     itens = nf.get('itens', [])
-                    
-                    # Soma bruta dos produtos para calcular o peso de cada item no frete/desconto
                     soma_produtos = sum([(i.get('valor', 0) * i.get('quantidade', 0)) for i in itens])
                     if soma_produtos == 0: soma_produtos = 1
 
                     for item in itens:
                         sku = item.get('codigo', '').strip()
                         if not sku:
-                            print(f"      ⚠️ SKU vazio na NF {nf.get('numero')}, pulando item.")
                             continue
 
                         qtd = item.get('quantidade', 0)
                         valor_bruto_unitario = item.get('valor', 0)
                         total_bruto_item = valor_bruto_unitario * qtd
                         
-                        # Calcula a proporção (peso) deste item no valor total da nota
                         peso_item = total_bruto_item / soma_produtos
                         
-                        # 1. Rateio Proporcional de Frete e Outras Despesas (Valor Unitário)
                         frete_unitario = ((val_frete_total + val_outras_total) * peso_item) / qtd if qtd > 0 else 0
                         
-                        # 2. Captura IPI (Extraído do objeto de impostos)
-                        total_ipi_item = item.get('impostos', {}).get('ipi', {}).get('valor', 0)
+                        total_ipi_item = item.get('impostos', {}).get('ipi', {}).get('valor', 0) or 0
                         ipi_unitario = total_ipi_item / qtd if qtd > 0 else 0
                         
-                        # 3. Captura Desconto Unitário direto do item
-                        desc_item_unitario = item.get('desconto', 0)
+                        desc_item_unitario = item.get('desconto', 0) or 0
                         
                         buffer.append({
                             "id_bling": nf['id'],
@@ -124,9 +117,9 @@ def processar_loja(config):
                             "data_entrada": nf['dataEmissao'][:10],
                             "quantidade": qtd,
                             "custo_unitario": valor_bruto_unitario,
-                            "desconto": desc_item_unitario, # Valor unitário
-                            "frete": frete_unitario,        # Valor unitário rateado
-                            "ipi": ipi_unitario,            # Valor unitário
+                            "desconto": desc_item_unitario,
+                            "frete": frete_unitario,
+                            "ipi": ipi_unitario,
                             "nfe": str(nf.get('numero')),
                             "fornecedor": nome_fornecedor,
                             "loja": nome_loja
@@ -139,5 +132,9 @@ def processar_loja(config):
         print(f"❌ Erro crítico em {nome_loja}: {e}")
 
 if __name__ == "__main__":
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        print("❌ Erro: SUPABASE_URL e SUPABASE_KEY são obrigatórios.")
+        exit(1)
+        
     for loja in CONFIG_LOJAS:
         processar_loja(loja)

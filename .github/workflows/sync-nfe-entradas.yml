@@ -1,0 +1,35 @@
+name: Sync NFs de Entrada (Compras)
+
+on:
+  schedule:
+    # Roda a cada 4 horas (00:00, 04:00, 08:00, 12:00, 16:00, 20:00 UTC)
+    - cron: '0 */4 * * *'
+  workflow_dispatch: # Permite rodar manualmente pelo painel do GitHub Actions
+
+jobs:
+  sincronizar-nfs:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout do código
+        uses: actions/checkout@v3
+
+      - name: Configurar Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Instalar Dependências
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests
+
+      - name: Rodar Script de Sincronização
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          BLING_CLIENT_ID_PORTFIO: ${{ secrets.BLING_CLIENT_ID_PORTFIO }}
+          BLING_SECRET_PORTFIO: ${{ secrets.BLING_SECRET_PORTFIO }}
+          BLING_CLIENT_ID_PORTCASA: ${{ secrets.BLING_CLIENT_ID_PORTCASA }}
+          BLING_SECRET_PORTCASA: ${{ secrets.BLING_SECRET_PORTCASA }}
+        run: python sync_nfe_entradas.py
