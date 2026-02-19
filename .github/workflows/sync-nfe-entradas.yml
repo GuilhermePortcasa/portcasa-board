@@ -32,4 +32,4 @@ jobs:
           BLING_SECRET_PORTFIO: ${{ secrets.BLING_SECRET_PORTFIO }}
           BLING_CLIENT_ID_PORTCASA: ${{ secrets.BLING_CLIENT_ID_PORTCASA }}
           BLING_SECRET_PORTCASA: ${{ secrets.BLING_SECRET_PORTCASA }}
-        run: python sync_nfe_entradas.py
+        run: python scripts/sync_nfe_entradas.py
