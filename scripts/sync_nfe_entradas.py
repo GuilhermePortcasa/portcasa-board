@@ -5,8 +5,7 @@ from datetime import datetime, timedelta
 from bling_service import BlingService, SUPABASE_URL, SUPABASE_KEY
 
 # --- CONFIGURAÇÕES DINÂMICAS ---
-# Busca NFs emitidas nos últimos 19 dias
-DIAS_RETROATIVOS = 19
+DIAS_RETROATIVOS = 7
 DATA_INICIO = (datetime.now() - timedelta(days=DIAS_RETROATIVOS)).strftime("%Y-%m-%d")
 
 SITUACOES_PADRAO_IGNORAR = [1, 2, 3, 8, 10, 11, 12] 
