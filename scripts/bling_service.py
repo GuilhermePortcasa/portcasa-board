@@ -96,12 +96,14 @@ class BlingService:
     def get_valid_token(self):
         """Retorna um token válido, renovando se necessário (buffer de 5 min)"""
         data = self._get_tokens_db()
-        expires_at_str = data['expires_at'].replace('Z', '+00:00')
-        expires_at = datetime.fromisoformat(expires_at_str)
-
-        # Garante comparação entre datas com fuso horário
-        if expires_at.tzinfo is None:
-            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        
+        # Limpa a string da data para evitar erro de formato
+        # Ex: "2026-02-19T08:49:34.17+00:00" -> "2026-02-19T08:49:34"
+        raw_date = data['expires_at']
+        clean_date = raw_date.split('+')[0].split('.')[0].replace('Z', '')
+        
+        # Converte para datetime e aplica o fuso UTC
+        expires_at = datetime.fromisoformat(clean_date).replace(tzinfo=timezone.utc)
         
         agora = datetime.now(timezone.utc)
 

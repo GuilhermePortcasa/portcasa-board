@@ -93,6 +93,40 @@ Deno.serve(async (req) => {
       }
     };
 
+    // FUNÇÃO AUXILIAR: Garante que a categoria exista antes de salvar o produto
+    const garantirCategoria = async (idCategoria) => {
+        if (!idCategoria || idCategoria === 0) return;
+
+        // 1. Verifica se já existe no Supabase (Cache rápido de leitura)
+        const { data: existe } = await supabase.from('categorias').select('id').eq('id', idCategoria).single();
+        if (existe) return;
+
+        console.log(`⚠️ Categoria ${idCategoria} nova detectada. Buscando no Bling...`);
+
+        // 2. Busca no Bling
+        const resBling = await fetch(`https://www.bling.com.br/Api/v3/categorias/produtos/${idCategoria}`, { 
+            headers: { "Authorization": `Bearer ${token}` } 
+        });
+
+        if (resBling.ok) {
+            const json = await resBling.json();
+            const cat = json.data;
+
+            // 3. Recursividade: Garante o Pai da categoria antes (se houver)
+            if (cat.categoriaPai && cat.categoriaPai.id) {
+                await garantirCategoria(cat.categoriaPai.id);
+            }
+
+            // 4. Salva a Categoria
+            await supabase.from('categorias').upsert({
+                id: cat.id,
+                descricao: cat.descricao,
+                id_categoria_pai: cat.categoriaPai?.id || null
+            });
+            console.log(`✅ Categoria ${cat.descricao} cadastrada.`);
+        }
+    };
+
     // --- ROTEAMENTO ---
 
     // A) ESTOQUE
@@ -330,69 +364,80 @@ Deno.serve(async (req) => {
         const skuPrincipal = p.codigo;
         const colIdLoja = `id_bling_${nomeLoja.toLowerCase().replace('_', '')}`;
 
-        // 1. Salva o Produto do Webhook (Seja Pai ou Filho - aqui os dados são sempre confiáveis)
-        const dadosPrincipais = { 
+        // --- CORREÇÃO: GARANTIR CATEGORIA DO PAI ---
+        if (p.categoria && p.categoria.id) {
+            await garantirCategoria(p.categoria.id);
+        }
+
+        // 1. Salva o Produto Principal
+        const dadosPrincipais = {
           sku: skuPrincipal, 
           nome: p.nome, 
           custo_fixo: p.fornecedor?.precoCusto || 0, 
           preco_venda_padrao: p.preco, 
-          tipo: p.tipo, 
-          situacao: p.situacao,
-          formato: p.formato, 
-          gtin: p.gtin, 
+          tipo: p.tipo || 'P', 
+          situacao: p.situacao || 'A',
+          formato: p.formato || 'S', 
+          gtin: p.gtin || null, 
+          gtin_embalagem: p.gtinEmbalagem || null, // Mapeando gtinEmbalagem do JSON
           fornecedor: p.fornecedor?.contato?.nome || null,
           categoria_id: p.categoria?.id || null, 
           [colIdLoja]: idBling 
         };
 
-        await supabase.from('produtos').upsert(dadosPrincipais, { onConflict: 'sku' });
-        console.log(`✅ Produto ${skuPrincipal} atualizado (Webhook Direto).`);
+        const { error: errPai } = await supabase.from('produtos').upsert(dadosPrincipais, { onConflict: 'sku' });
+        if (errPai) console.error(`❌ Erro ao salvar Pai ${skuPrincipal}:`, errPai.message);
+        else console.log(`✅ Produto ${skuPrincipal} atualizado.`);
 
-        // 2. Se for PAI, verifica os filhos com CUIDADO para não zerar dados
+        // 2. Processar Variações (Se existirem)
         if (p.variacoes && p.variacoes.length > 0) {
+            console.log(`🔄 Processando ${p.variacoes.length} variações de ${skuPrincipal}...`);
+            
             for (const v of p.variacoes) {
-                // LÓGICA DE PROTEÇÃO:
-                // Só atualiza o filho via "tabela do pai" se tivermos dados relevantes.
-                // Se o preço vier 0, ignoramos para não sobrescrever o webhook individual do filho que traz o preço real.
-                
-                const custoFilho = v.fornecedor?.precoCusto || p.fornecedor?.precoCusto || 0;
-                const precoFilho = v.preco || 0;
+                try {
+                    // --- ATUALIZAÇÃO AQUI: GARANTIR CATEGORIA DA VARIAÇÃO ---
+                    // Se a variação tiver uma categoria explicita, garantimos que ela existe antes de salvar
+                    if (v.categoria && v.categoria.id) {
+                        await garantirCategoria(v.categoria.id);
+                    }
 
-                // Se preço E custo forem zero, provavelmente é um dado incompleto do array pai. Pula.
-                if (precoFilho === 0 && custoFilho === 0) {
-                   // console.log(`⏭️ Ignorando update do filho ${v.codigo} via pai (dados zerados).`);
-                   continue;
+                    const custoFilho = v.fornecedor?.precoCusto || p.fornecedor?.precoCusto || 0;
+                    const precoFilho = v.preco || 0;
+
+                    await supabase.from('produtos').upsert({
+                        sku: v.codigo,
+                        nome: v.nome,
+                        custo_fixo: custoFilho,
+                        preco_venda_padrao: precoFilho, 
+                        tipo: v.tipo || 'P', // Default P
+                        situacao: v.situacao || 'A', // Default A
+                        formato: v.formato || 'S', // Default S
+                        gtin: v.gtin || null,
+                        gtin_embalagem: v.gtinEmbalagem || null,
+                        fornecedor: v.fornecedor?.contato?.nome || p.fornecedor?.contato?.nome || null,
+                        categoria_id: v.categoria?.id || p.categoria?.id || null,
+                        [colIdLoja]: v.id 
+                    }, { onConflict: 'sku' });
+                } catch (errVar) {
+                    console.error(`❌ Erro ao salvar variação ${v.codigo}:`, errVar);
                 }
-
-                await supabase.from('produtos').upsert({
-                    sku: v.codigo,
-                    nome: v.nome,
-                    custo_fixo: custoFilho,
-                    preco_venda_padrao: precoFilho, 
-                    tipo: v.tipo,
-                    situacao: v.situacao,
-                    formato: v.formato,
-                    gtin: v.gtin,
-                    fornecedor: v.fornecedor?.contato?.nome || p.fornecedor?.contato?.nome || null,
-                    categoria_id: v.categoria?.id || p.categoria?.id || null,
-                    [colIdLoja]: v.id 
-                }, { onConflict: 'sku' });
             }
         }
 
         // 3. Processamento da Estrutura (Kits/Composições)
-        // Só roda se o produto tiver estrutura definida
         const componentes = p.estrutura?.componentes || [];
 
         if (componentes.length > 0) {
-          // Limpa composições antigas desse pai
+          // Limpa composições antigas
           await supabase.from('composicoes').delete().eq('sku_pai', skuPrincipal);
 
           for (const comp of componentes) {
             const idBlingFilho = comp.produto.id;
             const qtdFilho = comp.quantidade;
 
-            // Busca o SKU do componente
+            // Busca o SKU do componente pelo ID do Bling
+            // Se o componente for um produto novo que ainda não caiu no webhook, isso pode falhar.
+            // O ideal seria buscar no Bling se não achar no banco, mas para performance, confiamos no banco.
             const { data: produtoFilho } = await supabase
               .from('produtos')
               .select('sku')
@@ -400,19 +445,19 @@ Deno.serve(async (req) => {
               .single();
 
             if (produtoFilho) {
-              await supabase.from('composicoes').upsert({
+              const { error: errComp } = await supabase.from('composicoes').upsert({
                 sku_pai: skuPrincipal,
                 sku_filho: produtoFilho.sku,
                 quantidade_filho: qtdFilho
               });
+              if (errComp) console.error(`❌ Erro ao salvar composição ${skuPrincipal}->${produtoFilho.sku}:`, errComp.message);
+            } else {
+              console.warn(`⚠️ Componente ID ${idBlingFilho} não encontrado no banco. Composição incompleta.`);
             }
           }
           console.log(`🧩 Composição de ${skuPrincipal} sincronizada.`);
         } else {
-           // Se não veio estrutura, garantimos que não existe lixo no banco
-           // Mas CUIDADO: Variações simples não têm estrutura, então só deletamos se tiver certeza que era pra ter
-           // Para segurança, deletamos apenas se o tipo for 'C' (Conjunto) ou se soubermos que mudou.
-           // Na dúvida, o delete abaixo garante que se deixou de ser kit, limpa o banco.
+           // Se não tem estrutura, remove qualquer resquício
            await supabase.from('composicoes').delete().eq('sku_pai', skuPrincipal);
         }
       }
