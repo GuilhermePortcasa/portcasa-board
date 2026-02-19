@@ -51,7 +51,6 @@ def salvar_compras(lote):
         "Prefer": "resolution=merge-duplicates", 
         "Content-Type": "application/json"
     }
-    # CORREÇÃO CRÍTICA: on_conflict avisa o Supabase como juntar os dados duplicados
     url = f"{SUPABASE_URL}/rest/v1/entradas_compras?on_conflict=id_bling,sku"
     
     r = requests.post(url, headers=headers, json=lote)
@@ -67,12 +66,10 @@ def processar_loja(config):
     service = BlingService(nome_loja)
     blacklist_norm = set([normalizar_texto(x) for x in BLACKLIST_FORNECEDORES])
     
-    # tipo: 0 (Entrada)
     params = {"dataEmissaoInicial": f"{DATA_INICIO} 00:00:00", "tipo": 0, "limite": 100}
     
     try:
         for lote in service.get_all_pages("/nfe", params=params):
-            # Usando dicionário para consolidar itens com o mesmo SKU na mesma NF
             itens_consolidados = {}
             
             for nf_resumo in lote:
@@ -80,7 +77,7 @@ def processar_loja(config):
                 if nf_resumo.get('naturezaOperacao', {}).get('id') in config['naturezas_ignorar']: continue
 
                 try:
-                    time.sleep(0.05) # Rate limit Bling
+                    time.sleep(0.05) 
                     url_det = f"https://www.bling.com.br/Api/v3/nfe/{nf_resumo['id']}"
                     token = service.get_valid_token()
                     resp = requests.get(url_det, headers={"Authorization": f"Bearer {token}"})
@@ -98,7 +95,7 @@ def processar_loja(config):
                     val_outras_total = nf.get('outrasDespesas', 0) or 0
                     
                     itens = nf.get('itens', [])
-                    soma_produtos = sum([(i.get('valor', 0) * i.get('quantidade', 0)) for i in itens])
+                    soma_produtos = sum([(i.get('valor', 0) * float(i.get('quantidade', 0))) for i in itens])
                     if soma_produtos == 0: soma_produtos = 1
 
                     for item in itens:
@@ -106,7 +103,9 @@ def processar_loja(config):
                         if not sku:
                             continue
 
-                        qtd = float(item.get('quantidade', 0) or 0)
+                        # CORREÇÃO AQUI: Força a quantidade a ser Integer (Inteiro)
+                        qtd = int(float(item.get('quantidade', 0) or 0))
+                        
                         if qtd <= 0: continue
                         
                         valor_bruto_unitario = float(item.get('valor', 0) or 0)
@@ -123,13 +122,12 @@ def processar_loja(config):
                         
                         chave_unica = (nf['id'], sku)
                         
-                        # CONSOLIDAÇÃO: Se o SKU aparecer 2x na mesma NF, soma as quantidades
                         if chave_unica not in itens_consolidados:
                             itens_consolidados[chave_unica] = {
                                 "id_bling": nf['id'],
                                 "sku": sku,
                                 "data_entrada": nf['dataEmissao'][:10],
-                                "quantidade": qtd,
+                                "quantidade": qtd, # Agora é int limpo
                                 "custo_unitario": valor_bruto_unitario,
                                 "desconto": desc_item_unitario,
                                 "frete": frete_unitario,
@@ -144,17 +142,15 @@ def processar_loja(config):
                             qtd_nova = qtd_antiga + qtd
                             
                             if qtd_nova > 0:
-                                # Media ponderada dos custos
                                 existente["custo_unitario"] = ((existente["custo_unitario"] * qtd_antiga) + (valor_bruto_unitario * qtd)) / qtd_nova
                                 existente["desconto"] = ((existente["desconto"] * qtd_antiga) + (desc_item_unitario * qtd)) / qtd_nova
                                 existente["frete"] = ((existente["frete"] * qtd_antiga) + (frete_unitario * qtd)) / qtd_nova
                                 existente["ipi"] = ((existente["ipi"] * qtd_antiga) + (ipi_unitario * qtd)) / qtd_nova
-                                existente["quantidade"] = qtd_nova
+                                existente["quantidade"] = qtd_nova # Mantém int
 
                 except Exception as e:
                     print(f"   ⚠️ Erro NF {nf_resumo['id']}: {e}")
             
-            # Converte o dicionário consolidado em lista e envia para o Supabase
             if itens_consolidados: 
                 salvar_compras(list(itens_consolidados.values()))
                 
