@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from bling_service import BlingService, SUPABASE_URL, SUPABASE_KEY
 
 # --- CONFIGURAÇÕES DINÂMICAS ---
-# Busca NFs emitidas nos últimos 7 dias (garante que não perde nada se o script falhar um dia)
+# Busca NFs emitidas nos últimos 19 dias
 DIAS_RETROATIVOS = 19
 DATA_INICIO = (datetime.now() - timedelta(days=DIAS_RETROATIVOS)).strftime("%Y-%m-%d")
 
@@ -46,14 +46,20 @@ def normalizar_texto(texto):
 def salvar_compras(lote):
     if not lote: return
     headers = {
-        "apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", 
-        "Prefer": "resolution=merge-duplicates", "Content-Type": "application/json"
+        "apikey": SUPABASE_KEY, 
+        "Authorization": f"Bearer {SUPABASE_KEY}", 
+        "Prefer": "resolution=merge-duplicates", 
+        "Content-Type": "application/json"
     }
-    r = requests.post(f"{SUPABASE_URL}/rest/v1/entradas_compras", headers=headers, json=lote)
+    # CORREÇÃO CRÍTICA: on_conflict avisa o Supabase como juntar os dados duplicados
+    url = f"{SUPABASE_URL}/rest/v1/entradas_compras?on_conflict=id_bling,sku"
+    
+    r = requests.post(url, headers=headers, json=lote)
+    
     if r.status_code not in [200, 201, 204]:
         print(f"      ❌ Erro Supabase: {r.text}")
     else:
-        print(f"      ✅ {len(lote)} itens de compra salvos.")
+        print(f"      ✅ {len(lote)} itens de compra salvos/atualizados com sucesso.")
 
 def processar_loja(config):
     nome_loja = config['nome']
@@ -66,7 +72,9 @@ def processar_loja(config):
     
     try:
         for lote in service.get_all_pages("/nfe", params=params):
-            buffer = []
+            # Usando dicionário para consolidar itens com o mesmo SKU na mesma NF
+            itens_consolidados = {}
+            
             for nf_resumo in lote:
                 if nf_resumo.get('situacao') in config['situacoes_ignorar']: continue
                 if nf_resumo.get('naturezaOperacao', {}).get('id') in config['naturezas_ignorar']: continue
@@ -98,36 +106,58 @@ def processar_loja(config):
                         if not sku:
                             continue
 
-                        qtd = item.get('quantidade', 0)
-                        valor_bruto_unitario = item.get('valor', 0)
+                        qtd = float(item.get('quantidade', 0) or 0)
+                        if qtd <= 0: continue
+                        
+                        valor_bruto_unitario = float(item.get('valor', 0) or 0)
                         total_bruto_item = valor_bruto_unitario * qtd
                         
                         peso_item = total_bruto_item / soma_produtos
                         
-                        frete_unitario = ((val_frete_total + val_outras_total) * peso_item) / qtd if qtd > 0 else 0
+                        frete_unitario = ((val_frete_total + val_outras_total) * peso_item) / qtd
                         
-                        total_ipi_item = item.get('impostos', {}).get('ipi', {}).get('valor', 0) or 0
-                        ipi_unitario = total_ipi_item / qtd if qtd > 0 else 0
+                        total_ipi_item = float(item.get('impostos', {}).get('ipi', {}).get('valor', 0) or 0)
+                        ipi_unitario = total_ipi_item / qtd
                         
-                        desc_item_unitario = item.get('desconto', 0) or 0
+                        desc_item_unitario = float(item.get('desconto', 0) or 0)
                         
-                        buffer.append({
-                            "id_bling": nf['id'],
-                            "sku": sku,
-                            "data_entrada": nf['dataEmissao'][:10],
-                            "quantidade": qtd,
-                            "custo_unitario": valor_bruto_unitario,
-                            "desconto": desc_item_unitario,
-                            "frete": frete_unitario,
-                            "ipi": ipi_unitario,
-                            "nfe": str(nf.get('numero')),
-                            "fornecedor": nome_fornecedor,
-                            "loja": nome_loja
-                        })
+                        chave_unica = (nf['id'], sku)
+                        
+                        # CONSOLIDAÇÃO: Se o SKU aparecer 2x na mesma NF, soma as quantidades
+                        if chave_unica not in itens_consolidados:
+                            itens_consolidados[chave_unica] = {
+                                "id_bling": nf['id'],
+                                "sku": sku,
+                                "data_entrada": nf['dataEmissao'][:10],
+                                "quantidade": qtd,
+                                "custo_unitario": valor_bruto_unitario,
+                                "desconto": desc_item_unitario,
+                                "frete": frete_unitario,
+                                "ipi": ipi_unitario,
+                                "nfe": str(nf.get('numero')),
+                                "fornecedor": nome_fornecedor,
+                                "loja": nome_loja
+                            }
+                        else:
+                            existente = itens_consolidados[chave_unica]
+                            qtd_antiga = existente["quantidade"]
+                            qtd_nova = qtd_antiga + qtd
+                            
+                            if qtd_nova > 0:
+                                # Media ponderada dos custos
+                                existente["custo_unitario"] = ((existente["custo_unitario"] * qtd_antiga) + (valor_bruto_unitario * qtd)) / qtd_nova
+                                existente["desconto"] = ((existente["desconto"] * qtd_antiga) + (desc_item_unitario * qtd)) / qtd_nova
+                                existente["frete"] = ((existente["frete"] * qtd_antiga) + (frete_unitario * qtd)) / qtd_nova
+                                existente["ipi"] = ((existente["ipi"] * qtd_antiga) + (ipi_unitario * qtd)) / qtd_nova
+                                existente["quantidade"] = qtd_nova
+
                 except Exception as e:
                     print(f"   ⚠️ Erro NF {nf_resumo['id']}: {e}")
             
-            if buffer: salvar_compras(buffer)
+            # Converte o dicionário consolidado em lista e envia para o Supabase
+            if itens_consolidados: 
+                salvar_compras(list(itens_consolidados.values()))
+                
     except Exception as e:
         print(f"❌ Erro crítico em {nome_loja}: {e}")
 

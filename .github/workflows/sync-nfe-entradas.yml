@@ -2,8 +2,8 @@ name: Sync NFs de Entrada (Compras)
 
 on:
   schedule:
-    # Roda a cada 4 horas (00:00, 04:00, 08:00, 12:00, 16:00, 20:00 UTC)
-    - cron: '0 */4 * * *'
+    # Roda a cada 12 horas
+    - cron: '0 */12 * * *'
   workflow_dispatch: # Permite rodar manualmente pelo painel do GitHub Actions
 
 jobs:
