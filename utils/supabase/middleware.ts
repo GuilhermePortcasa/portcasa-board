@@ -33,20 +33,27 @@ export async function updateSession(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser()
 
-  const isLoginPage = request.nextUrl.pathname.startsWith('/login')
-  const isAuthRoute = request.nextUrl.pathname.startsWith('/auth')
+  const pathname = request.nextUrl.pathname
+  
+  const isLoginPage = pathname.startsWith('/login')
+  const isAuthRoute = pathname.startsWith('/auth')
+  // 🔥 Define a página de redefinição como uma rota permitida
+  const isResetPage = pathname.startsWith('/redefinir-senha')
 
-  // 1. Se NÃO tem usuário e a rota NÃO é de login nem de auth, redireciona para /login
-  if (!user && !isLoginPage && !isAuthRoute) {
+  // 1. Se NÃO tem usuário e a rota NÃO é uma das rotas públicas (login, auth ou redefinir)
+  // Redireciona para o login
+  if (!user && !isLoginPage && !isAuthRoute && !isResetPage) {
     const url = request.nextUrl.clone()
     url.pathname = '/login'
     return NextResponse.redirect(url)
   }
 
-  // 2. Se TEM usuário e ele está tentando acessar o /login, redireciona para /estoque
+  // 2. Se TEM usuário e ele está tentando acessar o /login, manda para o estoque
+  // Nota: Não redirecionamos se ele estiver na /redefinir-senha, 
+  // pois ele precisa estar "logado" via link de recuperação para mudar a senha.
   if (user && isLoginPage) {
     const url = request.nextUrl.clone()
-    url.pathname = '/estoque' // ou '/' dependendo de qual for a sua página principal
+    url.pathname = '/estoque'
     return NextResponse.redirect(url)
   }
 

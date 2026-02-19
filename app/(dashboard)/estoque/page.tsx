@@ -15,7 +15,9 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import * as XLSX from 'xlsx';
-import { DashboardHeader } from "@/components/header"; // Adicione este import lá em cima
+import { DashboardHeader } from "@/components/header";
+import Link from "next/link";
+import { ExternalLink } from "lucide-react";
 
 // Formatadores
 const fCurrency = (v: number) => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(v || 0);
@@ -236,7 +238,22 @@ export default function EstoquePage() {
               <Button variant="ghost" size="sm" className="h-6 px-2 text-blue-600 font-bold hover:bg-blue-50"><Truck size={12} className="mr-1"/> {fNum(qtd)}</Button>
             </DialogTrigger>
             <DialogContent className="max-w-xl">
-              <DialogHeader><DialogTitle>Pedidos em Andamento ({canal.toUpperCase()})</DialogTitle></DialogHeader>
+              <DialogHeader>
+                <DialogTitle className="flex justify-between items-center pr-6">
+                  <span>Pedidos em Andamento ({canal.toUpperCase()})</span>
+                  
+                  {/* NOVO BOTÃO DE COMUNICAÇÃO AQUI */}
+                  <Link 
+                    href={`/pedidos?busca=${encodeURIComponent(row.original.nome_pai || row.original.nome)}&canal=${canal}`} 
+                    target="_blank"
+                  >
+                    <Button variant="outline" size="sm" className="gap-2 text-blue-600 border-blue-200 hover:bg-blue-50">
+                      Ver na Tela de Pedidos <ExternalLink size={14} />
+                    </Button>
+                  </Link>
+                  
+                </DialogTitle>
+              </DialogHeader>
               <Table>
                 <TableHeader><TableRow><TableHead>SKU</TableHead><TableHead>Variação</TableHead><TableHead>Qtd</TableHead><TableHead>Previsão</TableHead><TableHead>Preço</TableHead></TableRow></TableHeader>
                 <TableBody>

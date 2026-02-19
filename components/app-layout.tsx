@@ -8,9 +8,10 @@ import { Sidebar } from "@/components/sidebar";
 export function AppLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   
-  const isLoginPage = pathname === "/login";
+  // Define as páginas que usam o layout "limpo" (sem sidebar/header)
+  const isPublicPage = pathname === "/login" || pathname === "/redefinir-senha";
 
-  if (isLoginPage) {
+  if (isPublicPage) {
     return (
       <main className="flex min-h-screen w-full items-center justify-center bg-slate-50">
         {children}
