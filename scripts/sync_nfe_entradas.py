@@ -6,7 +6,7 @@ from bling_service import BlingService, SUPABASE_URL, SUPABASE_KEY
 
 # --- CONFIGURAÇÕES DINÂMICAS ---
 # Busca NFs emitidas nos últimos 7 dias (garante que não perde nada se o script falhar um dia)
-DIAS_RETROATIVOS = 7
+DIAS_RETROATIVOS = 19
 DATA_INICIO = (datetime.now() - timedelta(days=DIAS_RETROATIVOS)).strftime("%Y-%m-%d")
 
 SITUACOES_PADRAO_IGNORAR = [1, 2, 3, 8, 10, 11, 12] 
