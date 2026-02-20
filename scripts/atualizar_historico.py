@@ -17,13 +17,18 @@ def processar_diario():
     tz = pytz.timezone('America/Sao_Paulo')
     hoje_br = datetime.now(tz).strftime("%Y-%m-%d")
     
-    # Busca estoque atual da View
-    url_est = f"{SUPABASE_URL}/rest/v1/view_dashboard_completa?select=est_loja,est_site,est_full,custo_final"
+    # 1. Adicionamos 'tipo' no select para poder filtrar kits
+    url_est = f"{SUPABASE_URL}/rest/v1/view_dashboard_completa?select=est_loja,est_site,est_full,custo_final,tipo"
     r_est = requests.get(url_est, headers=HEADERS).json()
     df_est = pd.DataFrame(r_est)
     
     if df_est.empty: return
 
+    # 2. APLICAMOS A TRAVA DE KIT (Igual ao React)
+    # Removemos itens do tipo 'E' para não duplicar o valor financeiro
+    df_est = df_est[df_est['tipo'] != 'E'].copy()
+
+    # 3. Fazemos os cálculos (Agora idênticos ao Header)
     total_est_loja = (df_est['est_loja'] * df_est['custo_final']).sum()
     total_est_site = ((df_est['est_site'] + df_est['est_full']) * df_est['custo_final']).sum()
 
@@ -34,7 +39,7 @@ def processar_diario():
     }
 
     requests.post(f"{SUPABASE_URL}/rest/v1/historico_resumo", headers=HEADERS, json=payload)
-    print(f"📊 Estoque do dia {hoje_br} registrado com sucesso.")
+    print(f"📊 Estoque do dia {hoje_br} registrado (Kits ignorados para evitar duplicidade).")
 
 if __name__ == "__main__":
     processar_diario()
