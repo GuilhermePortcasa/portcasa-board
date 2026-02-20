@@ -1,8 +1,7 @@
 "use client";
 
-import React, { useEffect, useState, useMemo, Suspense } from "react"; // Adicionado Suspense
+import React, { useEffect, useState, useMemo, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
-import { createClient } from "@/utils/supabase/client";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Calendar as CalendarIcon, DollarSign, TrendingUp, SearchX, ShoppingCart, Percent, Store, Globe, PackageOpen, ChevronRight, ChevronDown, Search, ArrowUpDown } from "lucide-react";
@@ -18,19 +17,18 @@ import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { useVendas } from "@/providers/vendas-context"; 
 
+// FUNÇÕES DE FORMATAÇÃO
 const fCurrency = (v: number) => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(v || 0);
 const fNum = (v: number) => new Intl.NumberFormat("pt-BR").format(v || 0);
 const fPercent = (v: number) => new Intl.NumberFormat("pt-BR", { style: "percent", minimumFractionDigits: 1 }).format(v || 0);
 
-// Criamos um componente interno para isolar o uso do useSearchParams
 function VendasContent() {
-  const supabase = createClient();
+  const { salesData, loading, fetchSales, lastDaysLoaded } = useVendas();
   const searchParams = useSearchParams();
 
-  const [rawData, setRawData] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  
+  // Estados de Filtro
   const initialSearch = searchParams.get("busca") || "";
   const initialCanal = (searchParams.get("canal") as "geral" | "loja" | "site") || "geral";
 
@@ -45,21 +43,16 @@ function VendasContent() {
     initialSearch ? undefined : { from: subDays(new Date(), 30), to: new Date() }
   );
 
+  // Controle de Carga Inicial
   useEffect(() => {
-    async function fetchVendas() {
-      setLoading(true);
-      const { data: res } = await supabase
-        .from("view_vendas_detalhadas")
-        .select("*")
-        .order("data_venda", { ascending: false });
-      if (res) setRawData(res);
-      setLoading(false);
+    if (lastDaysLoaded === null) {
+      fetchSales(30);
     }
-    fetchVendas();
-  }, []);
+  }, [fetchSales, lastDaysLoaded]);
 
   const handlePreset = (days: number | null, presetName: string) => {
     setActivePreset(presetName);
+    fetchSales(days);
     if (days === null) setDate(undefined);
     else setDate({ from: subDays(new Date(), days), to: new Date() });
   };
@@ -77,8 +70,9 @@ function VendasContent() {
     setSortConfig({ key, direction });
   };
 
+  // Filtragem dos dados do Contexto
   const filteredData = useMemo(() => {
-    let list = [...rawData];
+    let list = [...salesData];
     if (canalAtivo === "loja") list = list.filter(v => v.canal_macro === "LOJA");
     else if (canalAtivo === "site") {
       list = list.filter(v => v.canal_macro === "SITE");
@@ -104,8 +98,9 @@ function VendasContent() {
       );
     }
     return list;
-  }, [rawData, date, canalAtivo, subCanalSite, searchTerm]);
+  }, [salesData, date, canalAtivo, subCanalSite, searchTerm]);
 
+  // Processamento e Agrupamento
   const { kpis, chartData, topProducts, siteBreakdown } = useMemo(() => {
     let receita = 0, cmv = 0, lucro = 0, qtd = 0;
     let recSite = 0, recFull = 0, recCM = 0, recLoja = 0; 
@@ -191,7 +186,7 @@ function VendasContent() {
   const totalPages = Math.ceil(topProducts.length / itemsPerPage);
   const paginatedProducts = topProducts.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
-  if (loading) return <div className="p-10 text-center text-slate-500 italic animate-pulse">Consolidando devoluções e calculando CMV...</div>;
+  if (loading) return <div className="p-10 text-center text-slate-500 italic animate-pulse">Consolidando análise e buscando vendas...</div>;
 
   return (
     <div className="space-y-3 pb-10">
@@ -248,7 +243,7 @@ function VendasContent() {
       {filteredData.length === 0 ? (
         <Card className="p-10 flex flex-col items-center justify-center text-slate-400">
           <SearchX size={32} className="mb-2 opacity-20" />
-          <p className="font-medium text-sm">Nenhuma movimentação encontrada.</p>
+          <p className="font-medium text-sm">Nenhuma movimentação encontrada neste período.</p>
         </Card>
       ) : (
         <>
@@ -400,7 +395,6 @@ function VendasContent() {
   );
 }
 
-// O export default final agora envolve o conteúdo em Suspense
 export default function VendasPage() {
   return (
     <Suspense fallback={<div className="p-10 text-center text-slate-500 animate-pulse italic">Carregando análise de vendas...</div>}>
