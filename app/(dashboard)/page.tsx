@@ -211,7 +211,7 @@ export default function VisaoGeralPage() {
             </Card>
           </Link>
 
-          <Link href="/pedidos" className="block group">
+          <Link href="/compras" className="block group">
             <Card className="hover:border-orange-500 transition-all shadow-sm border-slate-100">
               <CardContent className="p-5 flex items-center gap-4">
                 <div className="bg-orange-50 p-3 rounded-lg text-orange-600 group-hover:bg-orange-600 group-hover:text-white transition-all"><Truck size={20} /></div>
