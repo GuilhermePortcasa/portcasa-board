@@ -3,6 +3,7 @@
 
 import { usePathname } from "next/navigation";
 import { DashboardProvider } from "@/providers/dashboard-context";
+import { VendasProvider } from "@/providers/vendas-context"; // Importe o Provider
 import { Sidebar } from "@/components/sidebar";
 
 export function AppLayout({ children }: { children: React.ReactNode }) {
@@ -21,16 +22,18 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <DashboardProvider>
-      <div className="flex h-screen w-full">
-        <Sidebar />
+      <VendasProvider> {/* Adicione o Provider aqui */}
+        <div className="flex h-screen w-full">
+          <Sidebar />
 
-        <main className="flex-1 flex flex-col h-full min-w-0 overflow-hidden">
-          {/* Header Removido Daqui! Ele vai para as páginas agora. */}
-          <div className="flex-1 overflow-y-auto p-6 scroll-smooth">
-            {children}
-          </div>
-        </main>
-      </div>
+          <main className="flex-1 flex flex-col h-full min-w-0 overflow-hidden">
+            {/* Header Removido Daqui! Ele vai para as páginas agora. */}
+            <div className="flex-1 overflow-y-auto p-6 scroll-smooth">
+              {children}
+            </div>
+          </main>
+        </div>
+      </VendasProvider>
     </DashboardProvider>
   );
 }

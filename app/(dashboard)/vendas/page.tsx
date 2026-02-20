@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState, useMemo, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
+import { createClient } from "@/utils/supabase/client";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Calendar as CalendarIcon, DollarSign, TrendingUp, SearchX, ShoppingCart, Percent, Store, Globe, PackageOpen, ChevronRight, ChevronDown, Search, ArrowUpDown } from "lucide-react";
@@ -43,12 +44,13 @@ function VendasContent() {
     initialSearch ? undefined : { from: subDays(new Date(), 30), to: new Date() }
   );
 
-  // Controle de Carga Inicial
+  // Controle de Carga Inicial Segura
   useEffect(() => {
-    if (lastDaysLoaded === null) {
+    // Só manda buscar se ainda não tiver buscado (evita loops infinitos)
+    if (lastDaysLoaded === null && !loading) {
       fetchSales(30);
     }
-  }, [fetchSales, lastDaysLoaded]);
+  }, [fetchSales, lastDaysLoaded, loading]);
 
   const handlePreset = (days: number | null, presetName: string) => {
     setActivePreset(presetName);
@@ -70,9 +72,10 @@ function VendasContent() {
     setSortConfig({ key, direction });
   };
 
-  // Filtragem dos dados do Contexto
+  // Filtragem dos dados (Garantindo que salesData é sempre array)
   const filteredData = useMemo(() => {
-    let list = [...salesData];
+    let list = Array.isArray(salesData) ? [...salesData] : []; // Segurança Extra contra undefined
+
     if (canalAtivo === "loja") list = list.filter(v => v.canal_macro === "LOJA");
     else if (canalAtivo === "site") {
       list = list.filter(v => v.canal_macro === "SITE");
