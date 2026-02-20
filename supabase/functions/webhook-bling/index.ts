@@ -153,14 +153,27 @@ Deno.serve(async (req) => {
         if (origem) {
           const itens = v.itens || [];
           let totalVenda = itens.reduce((acc, i) => acc + (i.valor * i.quantidade), 0) || 1;
+          
           for (const item of itens) {
             if (IDS_NATUREZA_BLOQUEADA.includes(item.naturezaOperacao?.id)) continue;
+            
             const peso = (item.valor * item.quantidade) / totalVenda;
+            
+            // Cálculos Totais Exatos da Linha
+            const descGlobalLinha = (v.desconto?.valor || 0) * peso;
+            const descItemLinha = item.desconto || 0;
+            const freteLinha = (v.transporte?.frete || 0) * peso;
+            const valorBrutoLinha = item.valor * item.quantidade;
+            
+            // O pulo do gato: Calculamos o valor final aqui! (Math.max evita valores negativos)
+            const valorLiquido = Math.max(0, valorBrutoLinha - (descGlobalLinha + descItemLinha) + freteLinha);
+
             await supabase.from('pedidos_venda').upsert({
               id: idBling, sku: item.codigo, data_pedido: v.data, origem: origem, loja: nomeLoja,
               quantidade: item.quantidade, preco_unitario: item.valor, 
-              desconto: ((v.desconto?.valor || 0) * peso) / item.quantidade + (item.desconto || 0),
-              frete: ((v.transporte?.frete || 0) * peso) / item.quantidade
+              desconto: descGlobalLinha + descItemLinha,
+              frete: freteLinha,
+              valor_total_liquido: valorLiquido // Salvando o valor exato no banco!
             });
             await atualizarEstoqueManual(item.codigo);
           }
@@ -185,42 +198,38 @@ Deno.serve(async (req) => {
         if (nf.tipo === 1 && eSerie1 && eSituacaoValidaPadrao && !IDS_NATUREZA_BLOQUEADA.includes(natId)) {
           const itens = nf.itens || [];
           
-          // CORREÇÃO: Usa 'valor' (padrão NFe V3) ou 'valorUnitario' (fallback)
           let totalItens = itens.reduce((acc, i) => {
              const preco = i.valor || i.valorUnitario || 0;
              return acc + (preco * i.quantidade);
-          }, 0);
-          
-          if (totalItens === 0) totalItens = 1; // Evita divisão por zero
+          }, 0) || 1; 
 
-          // Cálculos Totais da Nota
           const vFrete = nf.valorFrete || 0;
           const vOutras = nf.outrasDespesas || 0;
           const vNota = nf.valorNota || 0;
           
-          // Cálculo do Desconto Global Rateado
-          // (Soma Produtos + Frete + Outras) - Valor Final da Nota = Desconto
           const valDescCalc = Math.max(0, (totalItens + vFrete + vOutras) - vNota);
 
           for (const item of itens) {
-            // CORREÇÃO: Pega o preço correto
             const precoUnitario = item.valor || item.valorUnitario || 0;
-            
             const peso = (precoUnitario * item.quantidade) / totalItens;
             
+            // Cálculos Totais Exatos da Linha
+            const descontoLinha = valDescCalc * peso;
+            const freteLinha = vFrete * peso;
+            const valorBrutoLinha = precoUnitario * item.quantidade;
+            
+            const valorLiquido = Math.max(0, valorBrutoLinha - descontoLinha + freteLinha);
+            
             await supabase.from('nfe_saida').upsert({
-              id: idBling, 
-              sku: item.codigo, 
-              data_emissao: nf.dataEmissao.substring(0, 10),
+              id: idBling, sku: item.codigo, data_emissao: nf.dataEmissao.substring(0, 10),
               origem: nomeLoja === 'CASA_MODELO' ? 'CASA_MODELO' : 'SITE', 
-              loja: nomeLoja,
-              quantidade: item.quantidade, 
-              preco_unitario: precoUnitario, // <--- Aqui estava o erro
-              desconto: (valDescCalc * peso) / item.quantidade, 
-              frete: (vFrete * peso) / item.quantidade
+              loja: nomeLoja, quantidade: item.quantidade, preco_unitario: precoUnitario, 
+              desconto: descontoLinha, 
+              frete: freteLinha,
+              valor_total_liquido: valorLiquido // Salvando o valor exato no banco!
             });
           }
-          console.log(`✅ NFe Venda ${idBling} processada com sucesso.`);
+          console.log(`✅ NFe Venda ${idBling} processada.`);
         }
         
         // --- ROTA 2: DEVOLUÇÃO (Entrada Tipo 0) ---

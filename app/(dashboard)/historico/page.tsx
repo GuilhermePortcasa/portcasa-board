@@ -34,12 +34,12 @@ export default function HistoricoPage() {
   const [rawData, setRawData] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   
-  // Estado do Calendário (Padrão: Últimos 30 dias)
-  const [date, setDate] = useState<DateRange | undefined>({
-    from: subDays(new Date(), 30),
-    to: new Date(),
-  });
+// Controle do filtro ativo (Padrão: "tudo")
+  const [activePreset, setActivePreset] = useState<string>("tudo");
 
+  // Estado do Calendário (Padrão: undefined para não filtrar datas)
+  const [date, setDate] = useState<DateRange | undefined>(undefined);
+  
   useEffect(() => {
     async function fetchHistorico() {
       setLoading(true);
@@ -53,16 +53,31 @@ export default function HistoricoPage() {
     fetchHistorico();
   }, []);
 
-  // FILTRAGEM DINÂMICA PELO CALENDÁRIO
+  // Função para aplicar os atalhos rápidos
+  const handlePreset = (days: number | null, presetName: string) => {
+    setActivePreset(presetName);
+    if (days === null) {
+      setDate(undefined); // "Tudo" - remove o filtro de datas
+    } else {
+      setDate({
+        from: subDays(new Date(), days),
+        to: new Date(),
+      });
+    }
+  };
+
+  // FILTRAGEM DINÂMICA PELO CALENDÁRIO OU ATALHO
   const filteredData = useMemo(() => {
     let list = [...rawData];
     
-    if (date?.from && date?.to) {
+    // Se tiver data 'from' (mesmo que 'to' ainda não tenha sido clicada no calendário)
+    if (date?.from) {
       list = list.filter(item => {
         const itemDate = new Date(item.data + 'T00:00:00');
+        const endDay = date.to ? startOfDay(date.to) : startOfDay(date.from!); // Resolve o clique único
         return isWithinInterval(itemDate, { 
           start: startOfDay(date.from!), 
-          end: startOfDay(date.to!) 
+          end: endDay
         });
       });
     }
@@ -90,8 +105,8 @@ export default function HistoricoPage() {
 
   return (
     <div className="space-y-6 pb-10">
-      {/* HEADER COM DATE PICKER */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white p-4 rounded-xl border shadow-sm">
+      {/* HEADER COM DATE PICKER E ATALHOS */}
+      <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4 bg-white p-4 rounded-xl border shadow-sm">
         <div>
           <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
             <History className="text-blue-600" /> Evolução de Patrimônio
@@ -99,30 +114,40 @@ export default function HistoricoPage() {
           <p className="text-sm text-slate-500">Histórico de inventário por período selecionado.</p>
         </div>
 
-        {/* COMPONENTE DE CALENDÁRIO */}
-        <div className="grid gap-2">
+        {/* CONTROLES DE FILTRO */}
+        <div className="flex flex-col sm:flex-row items-center gap-3 w-full xl:w-auto">
+          
+          {/* BOTÕES DE ATALHO RÁPIDO */}
+          <div className="flex items-center bg-slate-100 p-1 rounded-lg w-full sm:w-auto justify-between">
+            <Button variant={activePreset === "7d" ? "default" : "ghost"} size="sm" className="text-xs h-7 px-3" onClick={() => handlePreset(7, "7d")}>7D</Button>
+            <Button variant={activePreset === "30d" ? "default" : "ghost"} size="sm" className="text-xs h-7 px-3" onClick={() => handlePreset(30, "30d")}>30D</Button>
+            <Button variant={activePreset === "90d" ? "default" : "ghost"} size="sm" className="text-xs h-7 px-3" onClick={() => handlePreset(90, "90d")}>90D</Button>
+            <Button variant={activePreset === "tudo" ? "default" : "ghost"} size="sm" className="text-xs h-7 px-3" onClick={() => handlePreset(null, "tudo")}>Tudo</Button>
+          </div>
+
+          {/* COMPONENTE DE CALENDÁRIO */}
           <Popover>
             <PopoverTrigger asChild>
               <Button
                 id="date"
                 variant={"outline"}
                 className={cn(
-                  "w-[300px] justify-start text-left font-normal border-slate-200 shadow-sm hover:bg-slate-50",
-                  !date && "text-muted-foreground"
+                  "w-full sm:w-[260px] justify-start text-left font-normal border-slate-200 shadow-sm hover:bg-slate-50",
+                  !date && "text-muted-foreground",
+                  activePreset === "custom" && "border-blue-500 ring-1 ring-blue-500" // Destaca se estiver no modo custom
                 )}
               >
                 <CalendarIcon className="mr-2 h-4 w-4 text-blue-600" />
                 {date?.from ? (
                   date.to ? (
                     <>
-                      {format(date.from, "dd LLL yyyy", { locale: ptBR })} -{" "}
-                      {format(date.to, "dd LLL yyyy", { locale: ptBR })}
+                      {format(date.from, "dd/MM/yy")} a {format(date.to, "dd/MM/yy")}
                     </>
                   ) : (
-                    format(date.from, "dd LLL yyyy", { locale: ptBR })
+                    format(date.from, "dd/MM/yy")
                   )
                 ) : (
-                  <span>Selecionar período</span>
+                  <span>Período personalizado</span>
                 )}
               </Button>
             </PopoverTrigger>
@@ -132,7 +157,10 @@ export default function HistoricoPage() {
                 mode="range"
                 defaultMonth={date?.from}
                 selected={date}
-                onSelect={setDate}
+                onSelect={(newDate) => {
+                  setDate(newDate);
+                  setActivePreset("custom"); // Muda o estado para customizado ao clicar no calendário
+                }}
                 numberOfMonths={2}
                 locale={ptBR}
               />
@@ -145,8 +173,8 @@ export default function HistoricoPage() {
         <Card className="p-20 flex flex-col items-center justify-center text-slate-400">
            <SearchX size={48} className="mb-4 opacity-20" />
            <p className="font-medium">Nenhum registro encontrado para este período.</p>
-           <Button variant="link" onClick={() => setDate({ from: subDays(new Date(), 30), to: new Date() })}>
-             Limpar filtros
+           <Button variant="link" onClick={() => handlePreset(30, "30d")}>
+             Voltar para 30 dias
            </Button>
         </Card>
       ) : (
@@ -172,6 +200,7 @@ export default function HistoricoPage() {
                     axisLine={false} 
                     tickLine={false} 
                     tick={{fontSize: 10, fill: '#94a3b8'}}
+                    minTickGap={20}
                   />
                   <YAxis hide domain={['dataMin * 0.95', 'dataMax * 1.05']} />
                   <Tooltip 

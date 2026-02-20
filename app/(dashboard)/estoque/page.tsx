@@ -17,7 +17,7 @@ import { cn } from "@/lib/utils";
 import * as XLSX from 'xlsx';
 import { DashboardHeader } from "@/components/header";
 import Link from "next/link";
-import { ExternalLink } from "lucide-react";
+import { ExternalLink, TrendingUp } from "lucide-react";
 
 // Formatadores
 const fCurrency = (v: number) => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(v || 0);
@@ -167,7 +167,6 @@ export default function EstoquePage() {
         </Button>
       ),
       cell: ({ row }) => {
-        // Correção do nome: Se for filho e o nome do pai estiver contido, remove para limpar a visualização
         const name = row.original.nome;
         const parentName = row.original.nome_pai;
         const displayName = (!row.original.isParent && parentName && name.includes(parentName)) 
@@ -177,7 +176,7 @@ export default function EstoquePage() {
         return (
           <div className={row.original.isParent ? "font-bold text-slate-800" : "pl-6 text-xs text-slate-600"}>
             <div className="flex items-center gap-2">
-              <span>{displayName}</span>
+              <span className="truncate max-w-[400px]">{displayName}</span>
               <Badge variant="outline" className="text-[9px] h-4 font-mono">{row.original.sku}</Badge>
             </div>
             {row.original.isParent && <div className="text-[10px] text-muted-foreground flex items-center gap-1 mt-0.5"><Factory size={10}/> {row.original.fornecedor}</div>}
@@ -284,7 +283,23 @@ export default function EstoquePage() {
             v_60: canal === 'loja' ? row.original.v_qtd_60d_loja : canal === 'site' ? row.original.v_qtd_60d_site : (row.original.v_qtd_60d_loja + row.original.v_qtd_60d_site),
             v_90: canal === 'loja' ? row.original.v_qtd_90d_loja : canal === 'site' ? row.original.v_qtd_90d_site : (row.original.v_qtd_90d_loja + row.original.v_qtd_90d_site)
         };
-        return <div className="text-[10px] space-x-1"><b>{fNum(v_30)}</b><span className="opacity-60">/{fNum(v_60)}</span><span className="opacity-40">/{fNum(v_90)}</span></div>;
+        const parentName = row.original.nome_pai;
+        const name = row.original.nome;
+
+        return (
+          <div className="flex items-center justify-between gap-2 max-w-[120px]">
+            <div className="text-[10px] space-x-1">
+              <b>{fNum(v_30)}</b><span className="opacity-60">/{fNum(v_60)}</span><span className="opacity-40">/{fNum(v_90)}</span>
+            </div>
+            {row.original.isParent && (
+              <Link href={`/vendas?busca=${encodeURIComponent(parentName || name)}&canal=${canal}`} target="_blank">
+                <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-blue-500 hover:text-blue-700 hover:bg-blue-100 rounded-full shrink-0" title="Ver Análise de Vendas">
+                  <TrendingUp size={12} />
+                </Button>
+              </Link>
+            )}
+          </div>
+        );
       }
     },
 { 
