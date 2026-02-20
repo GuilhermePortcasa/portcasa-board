@@ -25,7 +25,7 @@ const sidebarItems = [
   { icon: Package, label: "Estoque", href: "/estoque" },
   { icon: ShoppingCart, label: "Vendas", href: "/vendas" },
   { icon: BarChartBig, label: "Index C&V", href: "/index-cv" },
-  { icon: FileText, label: "Pedidos", href: "/pedidos" },
+  { icon: FileText, label: "Compras", href: "/compras" },
   { icon: FileText, label: "Relatório", href: "/relatorio" },
 ];
 

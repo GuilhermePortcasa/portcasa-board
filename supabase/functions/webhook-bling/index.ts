@@ -152,28 +152,36 @@ Deno.serve(async (req) => {
 
         if (origem) {
           const itens = v.itens || [];
-          let totalVenda = itens.reduce((acc, i) => acc + (i.valor * i.quantidade), 0) || 1;
+          
+          // 1. Calcula o Desconto Global em REAIS (Tratando PERCENTUAL ou REAL)
+          let valorDescontoGlobalDinheiro = 0;
+          if (v.desconto?.unidade === 'PERCENTUAL') {
+            valorDescontoGlobalDinheiro = (Number(v.totalProdutos || 0) * Number(v.desconto?.valor || 0)) / 100;
+          } else {
+            valorDescontoGlobalDinheiro = Number(v.desconto?.valor || 0);
+          }
+
+          let totalVendaBaseRateio = itens.reduce((acc, i) => acc + (i.valor * i.quantidade), 0) || 1;
           
           for (const item of itens) {
             if (IDS_NATUREZA_BLOQUEADA.includes(item.naturezaOperacao?.id)) continue;
             
-            const peso = (item.valor * item.quantidade) / totalVenda;
+            const peso = (item.valor * item.quantidade) / totalVendaBaseRateio;
             
-            // Cálculos Totais Exatos da Linha
-            const descGlobalLinha = (v.desconto?.valor || 0) * peso;
-            const descItemLinha = item.desconto || 0;
-            const freteLinha = (v.transporte?.frete || 0) * peso;
+            // 2. No V3, item.valor JÁ ESTÁ com o desconto de item aplicado.
+            // Só precisamos ratear o desconto GLOBAL e o FRETE.
+            const descGlobalRateadoLinha = valorDescontoGlobalDinheiro * peso;
+            const freteRateadoLinha = (v.transporte?.frete || 0) * peso;
+            
             const valorBrutoLinha = item.valor * item.quantidade;
-            
-            // O pulo do gato: Calculamos o valor final aqui! (Math.max evita valores negativos)
-            const valorLiquido = Math.max(0, valorBrutoLinha - (descGlobalLinha + descItemLinha) + freteLinha);
+            const valorLiquidoFinal = Math.max(0, valorBrutoLinha - descGlobalRateadoLinha + freteRateadoLinha);
 
             await supabase.from('pedidos_venda').upsert({
               id: idBling, sku: item.codigo, data_pedido: v.data, origem: origem, loja: nomeLoja,
               quantidade: item.quantidade, preco_unitario: item.valor, 
-              desconto: descGlobalLinha + descItemLinha,
-              frete: freteLinha,
-              valor_total_liquido: valorLiquido // Salvando o valor exato no banco!
+              desconto: descGlobalRateadoLinha + (item.desconto || 0), // Guardamos o total para fins de log
+              frete: freteRateadoLinha,
+              valor_total_liquido: valorLiquidoFinal 
             });
             await atualizarEstoqueManual(item.codigo);
           }
@@ -198,7 +206,8 @@ Deno.serve(async (req) => {
         if (nf.tipo === 1 && eSerie1 && eSituacaoValidaPadrao && !IDS_NATUREZA_BLOQUEADA.includes(natId)) {
           const itens = nf.itens || [];
           
-          let totalItens = itens.reduce((acc, i) => {
+          // 1. Calculamos o valor bruto total dos produtos na nota
+          let totalBrutoProdutos = itens.reduce((acc, i) => {
              const preco = i.valor || i.valorUnitario || 0;
              return acc + (preco * i.quantidade);
           }, 0) || 1; 
@@ -207,29 +216,37 @@ Deno.serve(async (req) => {
           const vOutras = nf.outrasDespesas || 0;
           const vNota = nf.valorNota || 0;
           
-          const valDescCalc = Math.max(0, (totalItens + vFrete + vOutras) - vNota);
+          // 2. O Desconto Global da NFe é a diferença entre o (Bruto + Frete) e o Valor Final da Nota
+          const valorDescontoTotalNota = Math.max(0, (totalBrutoProdutos + vFrete + vOutras) - vNota);
 
           for (const item of itens) {
-            const precoUnitario = item.valor || item.valorUnitario || 0;
-            const peso = (precoUnitario * item.quantidade) / totalItens;
+            const precoTabelaUnitario = item.valor || item.valorUnitario || 0;
+            const valorBrutoLinha = precoTabelaUnitario * item.quantidade;
             
-            // Cálculos Totais Exatos da Linha
-            const descontoLinha = valDescCalc * peso;
-            const freteLinha = vFrete * peso;
-            const valorBrutoLinha = precoUnitario * item.quantidade;
+            // 3. Calculamos o peso desta linha no faturamento total bruto
+            const peso = valorBrutoLinha / totalBrutoProdutos;
             
-            const valorLiquido = Math.max(0, valorBrutoLinha - descontoLinha + freteLinha);
+            // 4. Rateamos o desconto e o frete proporcionalmente
+            const descontoLinhaRateado = valorDescontoTotalNota * peso;
+            const freteLinhaRateado = vFrete * peso;
             
+            // 5. Valor Líquido Real da Linha (O que o cliente pagou por esses itens)
+            const valorLiquidoRealLinha = Math.max(0, valorBrutoLinha - descontoLinhaRateado + freteLinhaRateado);
+
             await supabase.from('nfe_saida').upsert({
-              id: idBling, sku: item.codigo, data_emissao: nf.dataEmissao.substring(0, 10),
+              id: idBling, 
+              sku: item.codigo, 
+              data_emissao: nf.dataEmissao.substring(0, 10),
               origem: nomeLoja === 'CASA_MODELO' ? 'CASA_MODELO' : 'SITE', 
-              loja: nomeLoja, quantidade: item.quantidade, preco_unitario: precoUnitario, 
-              desconto: descontoLinha, 
-              frete: freteLinha,
-              valor_total_liquido: valorLiquido // Salvando o valor exato no banco!
+              loja: nomeLoja, 
+              quantidade: item.quantidade, 
+              preco_unitario: precoTabelaUnitario, 
+              desconto: descontoLinhaRateado, // Salvamos o desconto total da linha
+              frete: freteLinhaRateado,
+              valor_total_liquido: valorLiquidoRealLinha // Valor pronto para o Dashboard
             });
           }
-          console.log(`✅ NFe Venda ${idBling} processada.`);
+          console.log(`✅ NFe Venda ${idBling} recalculada e salva.`);
         }
         
         // --- ROTA 2: DEVOLUÇÃO (Entrada Tipo 0) ---
@@ -241,9 +258,7 @@ Deno.serve(async (req) => {
           if (nomeLoja === 'PORTCASA') {
             const eSerie888 = String(nf.serie) === "888";
             const ePendente = nf.situacao === 1; 
-            if (eSerie888 && ePendente) {
-              origemDevolucao = "LOJA";
-            }
+            if (eSerie888 && ePendente) origemDevolucao = "LOJA";
           } 
           // REGRA PADRÃO (PortFio / Casa Modelo): Situação Válida + Regras de Loja
           else if (eSituacaoValidaPadrao) {
@@ -258,35 +273,34 @@ Deno.serve(async (req) => {
           if (origemDevolucao) {
             const itens = nf.itens || [];
             
-            // Dados Globais da Nota
-            const valFrete = nf.valorFrete || 0;
-            const valOutras = nf.outrasDespesas || 0;
-            const valNota = nf.valorNota || 0;
+            const vFrete = nf.valorFrete || 0;
+            const vOutras = nf.outrasDespesas || 0;
+            const vNota = nf.valorNota || 0;
 
-            // 1. Calcula soma bruta (Usa .valor ou .valorUnitario)
-            let somaProdutos = itens.reduce((acc, i) => {
+            // 1. Calcula soma bruta dos produtos na nota
+            let totalBrutoProdutos = itens.reduce((acc, i) => {
                const preco = i.valor || i.valorUnitario || 0;
                return acc + (preco * i.quantidade);
-            }, 0);
-            
-            if (somaProdutos === 0) somaProdutos = 1;
+            }, 0) || 1;
 
-            // 2. Desconto Global Implícito
-            const totalEsperado = somaProdutos + valFrete + valOutras;
-            let descontoTotal = Math.max(0, totalEsperado - valNota);
+            // 2. Calcula o Desconto Total da Nota (Gap fiscal)
+            const valorDescontoTotalNota = Math.max(0, (totalBrutoProdutos + vFrete + vOutras) - vNota);
 
             for (const item of itens) {
-              const preco = item.valor || item.valorUnitario || 0;
-              const qtd = item.quantidade;
-              const valorBrutoItem = preco * qtd;
+              const precoTabelaUnitario = item.valor || item.valorUnitario || 0;
+              const valorBrutoLinha = precoTabelaUnitario * item.quantidade;
 
-              // Peso e Rateio
-              const peso = valorBrutoItem / somaProdutos;
-              const descRateio = descontoTotal * peso;
-              const freteRateio = valFrete * peso;
+              // 3. Rateio proporcional (Peso)
+              const peso = valorBrutoLinha / totalBrutoProdutos;
+              
+              // 4. Rateia Desconto, Frete e Outras Despesas
+              const descRateio = valorDescontoTotalNota * peso;
+              const freteRateio = vFrete * peso;
+              const outrasRateio = vOutras * peso;
 
-              // Valor Líquido Final
-              const valorEstornoLiquido = (valorBrutoItem + freteRateio) - descRateio;
+              // 5. Valor Líquido do Estorno (O que de fato saiu do caixa/receita)
+              // Soma o bruto + frete + taxas e subtrai o desconto
+              const valorEstornoLiquido = Math.max(0, (valorBrutoLinha + freteRateio + outrasRateio) - descRateio);
 
               await supabase.from('devolucoes').upsert({
                 id: idBling, 
@@ -294,14 +308,13 @@ Deno.serve(async (req) => {
                 data_devolucao: nf.dataEmissao.substring(0, 10),
                 origem: origemDevolucao, 
                 loja: nomeLoja, 
-                quantidade: qtd, 
+                quantidade: item.quantidade, 
                 valor_estorno: valorEstornoLiquido
               });
             }
-            console.log(`✅ Devolução ${idBling} salva (${origemDevolucao})`);
+            console.log(`✅ Devolução ${idBling} recalculada e salva.`);
           } else {
-             // Se não atende aos critérios (ex: PortCasa não pendente), remove
-             await supabase.from('devolucoes').delete().eq('id', idBling);
+            await supabase.from('devolucoes').delete().eq('id', idBling);
           }
         }
         // --- ROTA 3: COMPRA (Entrada Tipo 0) ---

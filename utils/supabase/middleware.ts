@@ -40,20 +40,16 @@ export async function updateSession(request: NextRequest) {
   // 🔥 Define a página de redefinição como uma rota permitida
   const isResetPage = pathname.startsWith('/redefinir-senha')
 
-  // 1. Se NÃO tem usuário e a rota NÃO é uma das rotas públicas (login, auth ou redefinir)
-  // Redireciona para o login
+
   if (!user && !isLoginPage && !isAuthRoute && !isResetPage) {
     const url = request.nextUrl.clone()
     url.pathname = '/login'
     return NextResponse.redirect(url)
   }
 
-  // 2. Se TEM usuário e ele está tentando acessar o /login, manda para o estoque
-  // Nota: Não redirecionamos se ele estiver na /redefinir-senha, 
-  // pois ele precisa estar "logado" via link de recuperação para mudar a senha.
   if (user && isLoginPage) {
     const url = request.nextUrl.clone()
-    url.pathname = '/estoque'
+    url.pathname = '/'
     return NextResponse.redirect(url)
   }
 
