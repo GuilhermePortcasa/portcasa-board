@@ -243,7 +243,7 @@ export default function EstoquePage() {
                   
                   {/* NOVO BOTÃO DE COMUNICAÇÃO AQUI */}
                   <Link 
-                    href={`/pedidos?busca=${encodeURIComponent(row.original.nome_pai || row.original.nome)}&canal=${canal}`} 
+                    href={`/compras?busca=${encodeURIComponent(row.original.nome_pai || row.original.nome)}&canal=${canal}`} 
                     target="_blank"
                   >
                     <Button variant="outline" size="sm" className="gap-2 text-blue-600 border-blue-200 hover:bg-blue-50">

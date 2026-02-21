@@ -2,8 +2,7 @@ name: Sincronização Diária de Pedidos de Compra
 
 on:
   schedule:
-    # Roda todos os dias às 04:00 AM (Horário de Brasília seria 07:00 UTC)
-    - cron: '0 */4 * * *'
+    - cron: '0 9-18 * * 1-5'
   workflow_dispatch: # Permite rodar manualmente pelo botão no GitHub
 
 jobs:

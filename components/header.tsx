@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Badge } from "@/components/ui/badge";
 import { Search, Filter, RotateCcw } from "lucide-react";
+import { useState, useEffect } from "react"; // IMPORTANTE: Adicionar useState e useEffect
 
 // Formatadores (reutilizados)
 const fCurrency = (v: number) => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(v || 0);
@@ -70,6 +71,26 @@ export function DashboardHeader() {
     suppliers, categories 
   } = useDashboard();
 
+  // NOVO ESTADO LOCAL: Segura o texto digitado sem disparar a busca global
+  const [localSearch, setLocalSearch] = useState(search);
+
+  // Sincroniza o estado local caso o filtro global seja limpo em outro lugar (ex: botão de reset)
+  useEffect(() => {
+    setLocalSearch(search);
+  }, [search]);
+
+  // Função que dispara a busca real
+  const handleSearchSubmit = () => {
+    setSearch(localSearch);
+  };
+
+  // Função para pegar o "Enter" no teclado
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      handleSearchSubmit();
+    }
+  };
+
   return (
     <div className="space-y-4"> 
       {/* 1. CARDS DE RESUMO (KPIs) */}
@@ -90,9 +111,21 @@ export function DashboardHeader() {
 
       {/* 2. BARRA DE AÇÕES */}
       <div className="bg-white p-1 rounded-xl flex items-center gap-4">
+        
+        {/* INPUT DE BUSCA CORRIGIDO */}
         <div className="relative flex-1 max-w-md">
-          <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground"/>
-          <Input placeholder="Buscar por SKU ou Nome..." className="pl-10" value={search} onChange={(e) => setSearch(e.target.value)}/>
+          {/* O ícone de Search agora é clicável e dispara a busca */}
+          <Search 
+            className="absolute left-3 top-3 h-4 w-4 text-muted-foreground cursor-pointer hover:text-blue-500 transition-colors z-10" 
+            onClick={handleSearchSubmit}
+          />
+          <Input 
+            placeholder="Buscar por SKU ou Nome (Aperte Enter)..." 
+            className="pl-10" 
+            value={localSearch} 
+            onChange={(e) => setLocalSearch(e.target.value)}
+            onKeyDown={handleKeyDown} // NOVO: Escuta a tecla Enter
+          />
         </div>
 
         <Tabs value={canal} onValueChange={(v:any) => setCanal(v)} className="hidden md:block">
