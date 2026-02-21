@@ -6,15 +6,16 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { 
   BarChartBig, ShoppingCart, TrendingDown, CheckCircle2, AlertTriangle, 
-  Search, PackageX, PackagePlus, ArrowDownUp, Filter, Store, Globe
+  Search, PackageX, PackagePlus, ArrowDownUp, Filter, Store, Globe, ExternalLink
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"; // IMPORT FALTANTE ADICIONADO AQUI
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
-import * as XLSX from 'xlsx'; // NOVO: Importação para gerar o Excel
+import * as XLSX from 'xlsx'; 
+import Link from "next/link"; // Adicionado para poder fazer o redirecionamento
 
 const fCurrency = (v: number) => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(v || 0);
 const fNum = (v: number) => new Intl.NumberFormat("pt-BR").format(v || 0);
@@ -23,7 +24,8 @@ export default function IndexCVPage() {
   const { rawData, loading, suppliers } = useDashboard(); 
   
   const [searchTerm, setSearchTerm] = useState("");
-  const [filtroAcao, setFiltroAcao] = useState<"todos" | "comprar" | "liquidar" | "ideal" | "transferir">("todos");
+  // 1. CORREÇÃO DE TIPO: Adicionado "antecipar" aqui para corrigir o erro do TS
+  const [filtroAcao, setFiltroAcao] = useState<"todos" | "comprar" | "liquidar" | "ideal" | "transferir" | "antecipar">("todos");
   const [sortConfig, setSortConfig] = useState<{ key: string, direction: 'asc' | 'desc' }>({ key: 'sugestao_valor', direction: 'desc' });
 
   const [canal, setCanal] = useState<"geral" | "loja" | "site">("geral");
@@ -36,10 +38,12 @@ export default function IndexCVPage() {
     setCurrentPage(1);
   }, [canal, fornecedor, filtroAcao, searchTerm, sortConfig]);
 
+  // Processamento e Matemática do Estoque
   const analysisData = useMemo(() => {
     let comprarQtd = 0, comprarValor = 0;
     let liquidarQtd = 0, liquidarValor = 0;
     let transferirQtd = 0, transferirValor = 0;
+    let anteciparQtd = 0, anteciparValor = 0;
 
     const list: any[] = [];
 
@@ -48,9 +52,18 @@ export default function IndexCVPage() {
       if (fornecedor !== "all" && item.fornecedor !== fornecedor) return;
 
       const hoje = new Date();
+      hoje.setHours(0,0,0,0);
+      
       const dataEntrada = item.data_ult_ent ? new Date(item.data_ult_ent + 'T00:00:00') : null;
       const diasDesdeEntrada = dataEntrada ? Math.floor((hoje.getTime() - dataEntrada.getTime()) / (1000 * 3600 * 24)) : 999;
 
+      const dataChegada = item.data_chegada_prevista ? new Date(item.data_chegada_prevista + 'T00:00:00') : null;
+      let diasParaChegar = 0;
+      if (dataChegada && dataChegada > hoje) {
+        diasParaChegar = Math.ceil((dataChegada.getTime() - hoje.getTime()) / (1000 * 3600 * 24));
+      }
+
+      // --- CÁLCULO SEGURO DA LOJA ---
       let v30_loja = Number(item.v_qtd_30d_loja || 0);
       let est_loja = Number(item.est_loja || 0);
       let transito_loja = Number(item.qtd_andamento_loja || 0);
@@ -67,6 +80,7 @@ export default function IndexCVPage() {
       }
       if (exc_loja < 0) exc_loja = 0;
 
+      // --- CÁLCULO SEGURO DO SITE ---
       let v30_site = Number(item.v_qtd_30d_site || 0);
       let est_site_puro = Number(item.est_site || 0); 
       let transito_site = Number(item.qtd_andamento_site || 0);
@@ -83,15 +97,20 @@ export default function IndexCVPage() {
       }
       if (exc_site < 0) exc_site = 0;
 
-
+      // --- MÉTRICAS DO CANAL ---
       let vendas30 = 0, estoqueReal = 0, transito = 0;
+      let localDoPedido = "geral";
 
       if (canal === "loja") {
         vendas30 = v30_loja; estoqueReal = est_loja; transito = transito_loja;
+        if (transito > 0) localDoPedido = "loja";
       } else if (canal === "site") {
         vendas30 = v30_site; estoqueReal = est_site_puro + Number(item.est_full || 0); transito = transito_site;
+        if (transito > 0) localDoPedido = "site";
       } else {
         vendas30 = v30_site + v30_loja; estoqueReal = Number(item.est_total || 0); transito = Number(item.qtd_andamento || 0);
+        if (transito_loja > 0 && transito_site === 0) localDoPedido = "loja";
+        else if (transito_site > 0 && transito_loja === 0) localDoPedido = "site";
       }
 
       if (vendas30 === 0 && estoqueReal === 0 && transito === 0) return;
@@ -99,7 +118,14 @@ export default function IndexCVPage() {
       const estoqueProjetado = estoqueReal + transito;
       const custo = Number(item.custo_final || 0);
       const giroDiario = vendas30 / 30;
-      let coberturaDias = giroDiario > 0 ? Math.floor(estoqueProjetado / giroDiario) : 999;
+      
+      let coberturaDiasFisico = giroDiario > 0 ? Math.floor(estoqueReal / giroDiario) : 999;
+      let coberturaDiasTotal = giroDiario > 0 ? Math.floor(estoqueProjetado / giroDiario) : 999;
+
+      // 💥 CÁLCULO DE PERDA PROJETADA (O Segredo da Antecipação)
+      const previsaoDiasChegada = diasParaChegar > 0 ? diasParaChegar : 15; // Assume 15 dias se não houver data preenchida
+      let diasDescobertos = Math.max(0, previsaoDiasChegada - coberturaDiasFisico);
+      let perdaProjetada = transito > 0 ? diasDescobertos * giroDiario : 0;
 
       let status = "IDEAL";
       let badgeClass = "bg-emerald-100 text-emerald-700 border-emerald-200";
@@ -107,6 +133,7 @@ export default function IndexCVPage() {
       let acaoMacro = "ideal";
       let detalheOrigem: any = null;
 
+      // 1. LÓGICA DE DECISÃO
       if (vendas30 === 0) {
          if (estoqueReal === 0 && transito > 0) {
             status = "A CHEGAR"; badgeClass = "bg-blue-100 text-blue-700 border-blue-200"; acaoMacro = "ideal";
@@ -118,16 +145,33 @@ export default function IndexCVPage() {
             }
          }
       } else {
-         if (estoqueProjetado === 0) {
+         if (estoqueReal === 0 && transito === 0) {
             status = "RUPTURA"; badgeClass = "bg-red-100 text-red-700 border-red-200"; acaoMacro = "comprar"; sugestaoQtd = Math.ceil(giroDiario * 60); 
-         } else if (coberturaDias < 30) {
+         } 
+         // SÓ SUGERE ANTECIPAR SE O RISCO DE VENDA PERDIDA FOR MAIOR OU IGUAL A 1 PEÇA
+         else if (transito > 0 && perdaProjetada >= 1) {
+            status = "ANTECIPAR PEDIDO"; 
+            badgeClass = "bg-yellow-100 text-yellow-800 border-yellow-300 shadow-sm"; 
+            acaoMacro = "antecipar"; 
+            sugestaoQtd = Math.min(transito, Math.ceil(perdaProjetada)); // Sugere antecipar o que vamos perder
+            detalheOrigem = { estFisico: estoqueReal, cobFisica: coberturaDiasFisico, diasChegada: previsaoDiasChegada, previsao: item.data_chegada_prevista, destinoReq: localDoPedido, perda: perdaProjetada };
+         }
+         else if (coberturaDiasTotal < 30) {
             status = "COMPRAR"; badgeClass = "bg-orange-100 text-orange-700 border-orange-200"; acaoMacro = "comprar"; sugestaoQtd = Math.ceil((giroDiario * 60) - estoqueProjetado); 
-         } else if (coberturaDias > 120) {
-            status = "EXCESSO"; badgeClass = "bg-purple-100 text-purple-700 border-purple-200"; acaoMacro = "liquidar"; sugestaoQtd = Math.ceil(estoqueProjetado - (giroDiario * 90)); 
+         } 
+         else if (coberturaDiasTotal > 120 && estoqueReal > 0) {
+            // Só liquida o que está na prateleira, não o que está no caminhão
+            status = "EXCESSO"; badgeClass = "bg-purple-100 text-purple-700 border-purple-200"; acaoMacro = "liquidar"; 
+            sugestaoQtd = Math.min(estoqueReal, Math.ceil(estoqueProjetado - (giroDiario * 90))); 
+         }
+         else if (estoqueReal === 0 && transito > 0) {
+            // Chega aqui se o físico tá zero, mas a perda projetada é quase nula (Giro baixíssimo)
+            status = "A CHEGAR"; badgeClass = "bg-blue-100 text-blue-700 border-blue-200"; acaoMacro = "ideal";
          }
       }
 
-      if (acaoMacro === "comprar") {
+      // 2. LÓGICA DE TRANSFERÊNCIA
+      if (acaoMacro === "comprar" || acaoMacro === "antecipar") {
         if ((canal === "loja" || canal === "geral") && exc_site > 0) {
           acaoMacro = "transferir";
           status = "TRANSF. DO SITE";
@@ -152,16 +196,18 @@ export default function IndexCVPage() {
         liquidarQtd += sugestaoQtd; liquidarValor += sugestaoValor;
       } else if (acaoMacro === "transferir") {
         transferirQtd += sugestaoQtd; transferirValor += sugestaoValor;
+      } else if (acaoMacro === "antecipar") {
+        anteciparQtd += sugestaoQtd; anteciparValor += sugestaoValor;
       }
 
       list.push({
         ...item,
-        vendas30, estoqueProjetado, transito, giroDiario, coberturaDias,
+        vendas30, estoqueProjetado, transito, giroDiario, coberturaDias: coberturaDiasTotal,
         status, badgeClass, acaoMacro, sugestaoQtd, sugestaoValor, detalheOrigem
       });
     });
 
-    return { list, comprarQtd, comprarValor, liquidarQtd, liquidarValor, transferirQtd, transferirValor };
+    return { list, comprarQtd, comprarValor, liquidarQtd, liquidarValor, transferirQtd, transferirValor, anteciparQtd, anteciparValor };
   }, [rawData, canal, fornecedor]);
 
   const handleSort = (key: string) => {
@@ -191,60 +237,44 @@ export default function IndexCVPage() {
   const totalPages = Math.ceil(filteredAndSortedList.length / itemsPerPage);
   const paginatedList = filteredAndSortedList.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
-  // --- FUNÇÃO DE EXPORTAÇÃO PARA EXCEL ---
   const handleExportExcel = () => {
-    // 1. Mapeia os dados filtrados para o formato das colunas exigidas
     const dataToExport = filteredAndSortedList.map(item => {
-      // Determina o nome da coluna de quantidade baseada na aba selecionada
       let acaoColunaNome = "Quantidade Sugerida";
       if (filtroAcao === "transferir") acaoColunaNome = "Quantidade (Transferir)";
       else if (filtroAcao === "comprar") acaoColunaNome = "Quantidade (Comprar)";
       else if (filtroAcao === "liquidar") acaoColunaNome = "Quantidade (Liquidar)";
+      else if (filtroAcao === "antecipar") acaoColunaNome = "Quantidade (Antecipar)"; 
 
-      // CORREÇÃO AQUI: Estoque agora reflete o canal filtrado (Estoque Físico = Projetado - Trânsito)
       const estoqueFisicoCanal = Number((item.estoqueProjetado || 0) - (item.transito || 0));
 
       const rowData: any = {
         "SKU": item.sku,
         "Descrição": item.nome, 
         "Custo Última Entrada": Number(item.custo_ult_ent || 0),
-        "Estoque": estoqueFisicoCanal, // <-- Atualizado para respeitar o filtro de canal
+        "Estoque": estoqueFisicoCanal, 
         "Fornecedor": item.fornecedor || "",
         "GTIN": item.gtin || "",
         "GTIN2": item.gtin_embalagem || "",
       };
 
-      // Adiciona a coluna dinâmica no final
       rowData[acaoColunaNome] = Number(item.sugestaoQtd || 0);
-
       return rowData;
     });
 
     if (dataToExport.length === 0) return alert("Nenhum dado para exportar com este filtro.");
 
-    // 2. Cria a planilha
     const worksheet = XLSX.utils.json_to_sheet(dataToExport);
 
-    // Formatação de Moeda na coluna "Custo Última Entrada" (Índice C)
     const range = XLSX.utils.decode_range(worksheet['!ref']!);
     for (let R = range.s.r + 1; R <= range.e.r; ++R) {
-      const custoCell = worksheet[XLSX.utils.encode_cell({r: R, c: 2})]; // 2 = Coluna C
+      const custoCell = worksheet[XLSX.utils.encode_cell({r: R, c: 2})]; 
       if (custoCell) custoCell.z = '"R$" #,##0.00';
     }
 
-    // Largura das colunas 
     worksheet['!cols'] = [
-      {wch: 15}, // SKU
-      {wch: 60}, // Descrição
-      {wch: 20}, // Custo
-      {wch: 10}, // Estoque
-      {wch: 25}, // Fornecedor
-      {wch: 15}, // GTIN
-      {wch: 15}, // GTIN2
-      {wch: 25}  // Quantidade Ação
+      {wch: 15}, {wch: 60}, {wch: 20}, {wch: 10}, {wch: 25}, {wch: 15}, {wch: 15}, {wch: 25} 
     ];
 
-    // 3. Salva o arquivo
     const workbook = XLSX.utils.book_new();
     const dataHoje = new Date().toLocaleDateString('pt-BR').replaceAll('/', '-');
     const nomeArquivo = `Sugestao_${filtroAcao.toUpperCase()}_${canal}_${dataHoje}.xlsx`;
@@ -284,7 +314,6 @@ export default function IndexCVPage() {
         </Card>
       </div>
 
-      {/* CONTROLES DA TABELA E AÇÕES */}
       <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4 bg-white p-4 rounded-xl border shadow-sm">
         
         <div className="flex flex-col sm:flex-row items-center gap-3 w-full xl:w-auto">
@@ -318,7 +347,6 @@ export default function IndexCVPage() {
             </TabsList>
           </Tabs>
 
-          {/* NOVO: BOTÃO EXPORTAR EXCEL */}
           <Button 
             variant="outline" 
             size="sm" 
@@ -333,6 +361,7 @@ export default function IndexCVPage() {
           <TabsList className="flex min-w-max h-9">
             <TabsTrigger value="todos" className="text-xs">Todos</TabsTrigger>
             <TabsTrigger value="comprar" className="text-xs text-orange-600 font-bold data-[state=active]:bg-orange-50 data-[state=active]:text-orange-700">Comprar</TabsTrigger>
+            <TabsTrigger value="antecipar" className="text-xs text-yellow-600 font-bold data-[state=active]:bg-yellow-50 data-[state=active]:text-yellow-700">Antecipar</TabsTrigger>
             <TabsTrigger value="transferir" className="text-xs text-blue-600 font-bold data-[state=active]:bg-blue-50 data-[state=active]:text-blue-700">Transferir</TabsTrigger>
             <TabsTrigger value="liquidar" className="text-xs text-purple-600 font-bold data-[state=active]:bg-purple-50 data-[state=active]:text-purple-700">Liquidar</TabsTrigger>
             <TabsTrigger value="ideal" className="text-xs text-emerald-600 font-bold data-[state=active]:bg-emerald-50 data-[state=active]:text-emerald-700">Ideal</TabsTrigger>
@@ -357,8 +386,10 @@ export default function IndexCVPage() {
               {paginatedList.map((row) => (
                 <TableRow key={row.sku} className="hover:bg-slate-50 transition-colors">
                   <TableCell>
-                    <div className="flex flex-col min-w-48">
-                      <span className="font-bold text-xs text-slate-700 truncate max-w-80" title={row.nome}>{row.nome}</span>
+                    <div className="flex flex-col min-w-[200px] max-w-[350px]">
+                      <span className="font-bold text-xs text-slate-700 break-words whitespace-normal">
+                        {row.nome}
+                      </span>
                       <span className="text-[10px] text-slate-400 font-mono mt-0.5">{row.sku}</span>
                     </div>
                   </TableCell>
@@ -380,6 +411,7 @@ export default function IndexCVPage() {
                   </TableCell>
 
                   <TableCell className="text-center">
+                    {/* 4. MODAL ADAPTADO COM O LINK PARA A PÁGINA DE COMPRAS */}
                     {row.acaoMacro === "transferir" && row.detalheOrigem ? (
                       <Popover>
                         <PopoverTrigger>
@@ -387,21 +419,62 @@ export default function IndexCVPage() {
                             {row.status}
                           </Badge>
                         </PopoverTrigger>
-                        <PopoverContent className="w-64 text-left p-3 text-sm" side="top">
+                        <PopoverContent className="w-64 text-left p-3 text-sm shadow-xl border-yellow-200" side="top">
                           <div className="font-bold mb-3 pb-2 border-b text-slate-700 flex items-center gap-2">
-                            <ArrowDownUp size={14} className="text-blue-600" /> Detalhes da Origem
+                            <AlertTriangle size={14} className="text-yellow-600" /> Risco de Ruptura
                           </div>
                           <div className="space-y-1.5 text-slate-600 text-xs">
-                            <div className="flex justify-between"><span>Local:</span> <span className="font-semibold text-slate-800">{row.detalheOrigem.nome}</span></div>
-                            <div className="flex justify-between"><span>Estoque Físico:</span> <span className="font-semibold">{fNum(row.detalheOrigem.est_disponivel)} un</span></div>
-                            <div className="flex justify-between"><span>Giro Diário:</span> <span className="font-semibold">{row.detalheOrigem.giro.toFixed(2)}/dia</span></div>
-                            <div className="flex justify-between text-blue-600 mt-2 pt-2 border-t border-blue-100 font-bold">
-                              <span>Máximo Transferível:</span> <span>{fNum(row.detalheOrigem.exc_calculado)} un</span>
+                            <div className="flex justify-between"><span>Estoque Físico:</span> <span className="font-semibold">{fNum(row.detalheOrigem.estFisico)} un</span></div>
+                            <div className="flex justify-between"><span>Cob. Física Atual:</span> <span className="font-semibold">{row.detalheOrigem.cobFisica} dias</span></div>
+                            <div className="flex justify-between text-yellow-700 mt-2 pt-2 border-t border-yellow-100 font-bold">
+                              <span>Chegada do Pedido:</span> <span>em {row.detalheOrigem.diasChegada} dias</span>
+                            </div>
+                            <div className="flex justify-between text-red-600 mt-1 font-bold">
+                              <span>Venda Perdida (Risco):</span> <span>{Math.ceil(row.detalheOrigem.perda)} un</span>
                             </div>
                           </div>
-                          <p className="text-[9px] text-slate-400 mt-3 leading-tight bg-slate-50 p-2 rounded">
-                            A sugestão protege a origem deixando 90 dias de cobertura ou esvazia caso o item esteja parado (&gt;45d sem vendas).
-                          </p>
+                          
+                          {/* BOTÃO QUE LINKA PARA COMPRAS */}
+                          <div className="mt-4 pt-3 border-t">
+                            <Link href={`/compras?busca=${encodeURIComponent(row.sku)}&canal=${row.detalheOrigem.destinoReq}`} target="_blank">
+                              <Button size="sm" className="w-full bg-yellow-100 hover:bg-yellow-200 text-yellow-800 border border-yellow-300 gap-2">
+                                Localizar Pedido <ExternalLink size={14} />
+                              </Button>
+                            </Link>
+                          </div>
+                        </PopoverContent>
+                      </Popover>
+                    ) : row.acaoMacro === "antecipar" && row.detalheOrigem ? (
+                      <Popover>
+                        <PopoverTrigger>
+                          <Badge variant="outline" className={cn("text-[10px] font-bold h-5 px-2", row.badgeClass)}>
+                            {row.status}
+                          </Badge>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-64 text-left p-3 text-sm shadow-xl border-yellow-200" side="top">
+                          <div className="font-bold mb-3 pb-2 border-b text-slate-700 flex items-center gap-2">
+                            <AlertTriangle size={14} className="text-yellow-600" /> Risco de Ruptura
+                          </div>
+                          <div className="space-y-1.5 text-slate-600 text-xs">
+                            <div className="flex justify-between"><span>Estoque Físico:</span> <span className="font-semibold text-red-500">{fNum(row.detalheOrigem.estFisico)} un</span></div>
+                            <div className="flex justify-between"><span>Cobertura Física:</span> <span className="font-semibold text-red-500">{row.detalheOrigem.cobFisica} dias</span></div>
+                            <div className="flex justify-between text-yellow-700 mt-2 pt-2 border-t border-yellow-100 font-bold">
+                              <span>Pedido Chega em:</span> <span>{row.detalheOrigem.diasChegada} dias</span>
+                            </div>
+                            {row.detalheOrigem.previsao && (
+                              <div className="text-right text-[9px] opacity-70">Prev: {new Date(row.detalheOrigem.previsao).toLocaleDateString('pt-BR')}</div>
+                            )}
+                          </div>
+                          
+                          {/* BOTÃO QUE LINKA PARA COMPRAS */}
+                          <div className="mt-4 pt-3 border-t">
+                            <Link href={`/compras?busca=${encodeURIComponent(row.sku)}&canal=${row.detalheOrigem.destinoReq}`} target="_blank">
+                              <Button size="sm" className="w-full bg-yellow-100 hover:bg-yellow-200 text-yellow-800 border border-yellow-300 gap-2">
+                                Localizar Pedido <ExternalLink size={14} />
+                              </Button>
+                            </Link>
+                          </div>
+
                         </PopoverContent>
                       </Popover>
                     ) : (
@@ -420,10 +493,12 @@ export default function IndexCVPage() {
                           "text-xs font-bold", 
                           row.acaoMacro === "comprar" ? "text-orange-600" : 
                           row.acaoMacro === "liquidar" ? "text-purple-600" : 
+                          row.acaoMacro === "antecipar" ? "text-yellow-600" :
                           "text-blue-600" 
                         )}>
                           {row.acaoMacro === "comprar" ? "Comprar " : 
                            row.acaoMacro === "liquidar" ? "Liquidar " : 
+                           row.acaoMacro === "antecipar" ? "Antecipar " :
                            "Transferir "}
                           {fNum(row.sugestaoQtd)} un
                         </span>
