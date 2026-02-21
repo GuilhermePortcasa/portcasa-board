@@ -14,6 +14,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"; // IMPORT FALTANTE ADICIONADO AQUI
 import { cn } from "@/lib/utils";
+import * as XLSX from 'xlsx'; // NOVO: Importação para gerar o Excel
 
 const fCurrency = (v: number) => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(v || 0);
 const fNum = (v: number) => new Intl.NumberFormat("pt-BR").format(v || 0);
@@ -190,6 +191,68 @@ export default function IndexCVPage() {
   const totalPages = Math.ceil(filteredAndSortedList.length / itemsPerPage);
   const paginatedList = filteredAndSortedList.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
+  // --- FUNÇÃO DE EXPORTAÇÃO PARA EXCEL ---
+  const handleExportExcel = () => {
+    // 1. Mapeia os dados filtrados para o formato das colunas exigidas
+    const dataToExport = filteredAndSortedList.map(item => {
+      // Determina o nome da coluna de quantidade baseada na aba selecionada
+      let acaoColunaNome = "Quantidade Sugerida";
+      if (filtroAcao === "transferir") acaoColunaNome = "Quantidade (Transferir)";
+      else if (filtroAcao === "comprar") acaoColunaNome = "Quantidade (Comprar)";
+      else if (filtroAcao === "liquidar") acaoColunaNome = "Quantidade (Liquidar)";
+
+      // CORREÇÃO AQUI: Estoque agora reflete o canal filtrado (Estoque Físico = Projetado - Trânsito)
+      const estoqueFisicoCanal = Number((item.estoqueProjetado || 0) - (item.transito || 0));
+
+      const rowData: any = {
+        "SKU": item.sku,
+        "Descrição": item.nome, 
+        "Custo Última Entrada": Number(item.custo_ult_ent || 0),
+        "Estoque": estoqueFisicoCanal, // <-- Atualizado para respeitar o filtro de canal
+        "Fornecedor": item.fornecedor || "",
+        "GTIN": item.gtin || "",
+        "GTIN2": item.gtin_embalagem || "",
+      };
+
+      // Adiciona a coluna dinâmica no final
+      rowData[acaoColunaNome] = Number(item.sugestaoQtd || 0);
+
+      return rowData;
+    });
+
+    if (dataToExport.length === 0) return alert("Nenhum dado para exportar com este filtro.");
+
+    // 2. Cria a planilha
+    const worksheet = XLSX.utils.json_to_sheet(dataToExport);
+
+    // Formatação de Moeda na coluna "Custo Última Entrada" (Índice C)
+    const range = XLSX.utils.decode_range(worksheet['!ref']!);
+    for (let R = range.s.r + 1; R <= range.e.r; ++R) {
+      const custoCell = worksheet[XLSX.utils.encode_cell({r: R, c: 2})]; // 2 = Coluna C
+      if (custoCell) custoCell.z = '"R$" #,##0.00';
+    }
+
+    // Largura das colunas 
+    worksheet['!cols'] = [
+      {wch: 15}, // SKU
+      {wch: 60}, // Descrição
+      {wch: 20}, // Custo
+      {wch: 10}, // Estoque
+      {wch: 25}, // Fornecedor
+      {wch: 15}, // GTIN
+      {wch: 15}, // GTIN2
+      {wch: 25}  // Quantidade Ação
+    ];
+
+    // 3. Salva o arquivo
+    const workbook = XLSX.utils.book_new();
+    const dataHoje = new Date().toLocaleDateString('pt-BR').replaceAll('/', '-');
+    const nomeArquivo = `Sugestao_${filtroAcao.toUpperCase()}_${canal}_${dataHoje}.xlsx`;
+    
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Analise");
+    XLSX.writeFile(workbook, nomeArquivo);
+  };
+
   if (loading) return <div className="p-10 text-center animate-pulse text-slate-500 italic">Analisando giro e cobertura de estoque...</div>;
 
   return (
@@ -221,10 +284,11 @@ export default function IndexCVPage() {
         </Card>
       </div>
 
+      {/* CONTROLES DA TABELA E AÇÕES */}
       <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4 bg-white p-4 rounded-xl border shadow-sm">
         
         <div className="flex flex-col sm:flex-row items-center gap-3 w-full xl:w-auto">
-          <div className="relative w-full sm:w-64">
+          <div className="relative w-full sm:w-[250px]">
             <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400"/>
             <Input 
               placeholder="Buscar SKU ou Produto..." 
@@ -234,7 +298,7 @@ export default function IndexCVPage() {
             />
           </div>
 
-          <div className="relative w-full sm:w-48">
+          <div className="relative w-full sm:w-[180px]">
             <Filter className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
             <select
               value={fornecedor}
@@ -253,6 +317,16 @@ export default function IndexCVPage() {
               <TabsTrigger value="site" className="text-xs flex gap-1"><Globe size={12}/> Site</TabsTrigger>
             </TabsList>
           </Tabs>
+
+          {/* NOVO: BOTÃO EXPORTAR EXCEL */}
+          <Button 
+            variant="outline" 
+            size="sm" 
+            onClick={handleExportExcel} 
+            className="h-9 w-full sm:w-auto bg-green-700 hover:bg-green-600 text-white border-green-800"
+          >
+            Exportar Excel
+          </Button>
         </div>
 
         <Tabs value={filtroAcao} onValueChange={(v: any) => setFiltroAcao(v)} className="w-full xl:w-auto overflow-x-auto">
