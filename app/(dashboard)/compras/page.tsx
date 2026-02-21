@@ -130,12 +130,27 @@ const exportToPDF = () => {
         .select("*")
         .order("data_prevista", { ascending: true });
         
-      if (!error && data) setRawData(data);
+      if (!error && data) {
+        // SOLUÇÃO BLINDADA TAMBÉM NOS PEDIDOS
+        const normalizedData = data.map(item => {
+          let fornLimpo = item.fornecedor;
+          if (fornLimpo) {
+            fornLimpo = String(fornLimpo)
+              .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+              .toUpperCase()
+              .replace(/\s+/g, ' ')
+              .trim();
+          }
+          return { ...item, fornecedor: fornLimpo };
+        });
+        
+        setRawData(normalizedData);
+      }
       setLoading(false);
     };
     fetchPedidos();
-  }, []);
-
+  }, [supabase]);
+  
   const fetchHistoricoCusto = async (sku: string, nome: string) => {
     setHistoryModal({ isOpen: true, sku, nome, data: [], loading: true });
     

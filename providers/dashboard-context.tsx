@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useState, useMemo, useRef, ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useState, useMemo, useRef, ReactNode } from "react";
 import { createClient } from "@/utils/supabase/client";
 
 interface DashboardContextType {
@@ -44,15 +44,27 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     
     try {
       console.time("Tempo de Carga da View");
-      // Como o limite é 100k, puxamos tudo de uma vez direto da View
       const { data, error } = await supabase
         .from("view_dashboard_completa")
         .select("*")
-        .limit(100000); // Garante que o limite seja respeitado
+        .limit(100000); 
         
       if (error) throw error;
       
-      setRawData(data || []);
+      // SOLUÇÃO BLINDADA: Remove acentos, espaços duplos e força maiúsculas
+      const normalizedData = (data || []).map(item => {
+        let fornLimpo = item.fornecedor;
+        if (fornLimpo) {
+          fornLimpo = String(fornLimpo)
+            .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // Tira acentos (ã -> a)
+            .toUpperCase() // Tudo maiúsculo
+            .replace(/\s+/g, ' ') // Se tiver 2 espaços seguidos, vira 1 só
+            .trim();
+        }
+        return { ...item, fornecedor: fornLimpo };
+      });
+
+      setRawData(normalizedData);
       console.timeEnd("Tempo de Carga da View");
     } catch (err) {
       console.error("Erro ao buscar dados da View:", err);
@@ -94,7 +106,32 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  // Lógica de Processamento Front-end (Mantida idêntica com proteção de Kit)
+  // --- FUNÇÃO AUXILIAR: Verifica se o produto pertence ao canal ativo ---
+  const isProductInCanal = useCallback((p: any, c: string) => {
+    if (c === "loja") {
+        return p.est_loja > 0 || (p.v_qtd_120d_geral > 0 && p.v_qtd_90d_loja > 0) || p.qtd_andamento_loja > 0;
+    }
+    if (c === "site") {
+        return (p.est_site + p.est_full) > 0 || (p.v_qtd_120d_geral > 0 && p.v_qtd_90d_site > 0) || p.qtd_andamento_site > 0;
+    }
+    return p.est_total > 0 || p.v_qtd_120d_geral > 0 || p.qtd_andamento > 0;
+  }, []);
+
+  // 1. FORNECEDORES DINÂMICOS (Filtra por Canal e Categoria)
+  const suppliers = useMemo(() => {
+    let list = rawData.filter(p => isProductInCanal(p, canal));
+    if (filterCat !== "all") list = list.filter(p => p.categoria === filterCat);
+    return Array.from(new Set(list.map((p: any) => p.fornecedor).filter(Boolean))).sort();
+  }, [rawData, canal, filterCat, isProductInCanal]);
+
+  // 2. CATEGORIAS DINÂMICAS (Filtra por Canal e Fornecedor)
+  const categories = useMemo(() => {
+    let list = rawData.filter(p => isProductInCanal(p, canal));
+    if (filterForn !== "all") list = list.filter(p => p.fornecedor === filterForn);
+    return Array.from(new Set(list.map((p: any) => p.categoria).filter(Boolean))).sort();
+  }, [rawData, canal, filterForn, isProductInCanal]);
+
+  // 3. LÓGICA DA TABELA E GRÁFICOS
   const processedData = useMemo(() => {
     const parentSkuMap: Record<string, string> = {};
     rawData.forEach(p => {
@@ -105,15 +142,10 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
         }
     });
 
-    let filtered = rawData;
-    if (canal === "loja") {
-        filtered = filtered.filter(p => p.est_loja > 0 || (p.v_qtd_120d_geral > 0 && p.v_qtd_90d_loja > 0) || p.qtd_andamento_loja > 0);
-    } else if (canal === "site") {
-        filtered = filtered.filter(p => (p.est_site + p.est_full) > 0 || (p.v_qtd_120d_geral > 0 && p.v_qtd_90d_site > 0) || p.qtd_andamento_site > 0);
-    } else {
-        filtered = filtered.filter(p => p.est_total > 0 || p.v_qtd_120d_geral > 0 || p.qtd_andamento > 0);
-    }
+    // Filtra a base primária pelo Canal
+    let filtered = rawData.filter(p => isProductInCanal(p, canal));
 
+    // Aplica os filtros de Categoria e Fornecedor
     if (filterForn !== "all") filtered = filtered.filter(p => p.fornecedor === filterForn);
     if (filterCat !== "all") filtered = filtered.filter(p => p.categoria === filterCat);
 
@@ -216,7 +248,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     }, []);
 
     return result.sort((a, b) => a.nome.localeCompare(b.nome));
-  }, [rawData, canal, search, filterForn, filterCat]);
+  }, [rawData, canal, search, filterForn, filterCat, isProductInCanal]);
 
   const totalStats = useMemo(() => {
     return processedData.reduce((acc, g) => {
@@ -242,8 +274,20 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     });
   }, [processedData]);
 
-  const suppliers = useMemo(() => Array.from(new Set(rawData.map((p: any) => p.fornecedor).filter(Boolean))).sort(), [rawData]);
-  const categories = useMemo(() => Array.from(new Set(rawData.map((p: any) => p.categoria).filter(Boolean))).sort(), [rawData]);
+// --- AUTO-LIMPEZA DE FILTROS ---
+  // Se o usuário mudar de canal ou de categoria/fornecedor, verificamos se o filtro 
+  // atual ainda é válido. Se não for, resetamos para "all".
+  useEffect(() => {
+    if (filterForn !== "all" && !suppliers.includes(filterForn)) {
+      setFilterForn("all");
+    }
+  }, [suppliers, filterForn]);
+
+  useEffect(() => {
+    if (filterCat !== "all" && !categories.includes(filterCat)) {
+      setFilterCat("all");
+    }
+  }, [categories, filterCat]);
 
   return (
     <DashboardContext.Provider value={{ 
