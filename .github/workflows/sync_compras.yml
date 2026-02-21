@@ -2,7 +2,7 @@ name: Sincronização Diária de Pedidos de Compra
 
 on:
   schedule:
-    - cron: '0 9-18 * * 1-5'
+    - cron: '0 12-21 * * 1-5'
   workflow_dispatch: # Permite rodar manualmente pelo botão no GitHub
 
 jobs:
