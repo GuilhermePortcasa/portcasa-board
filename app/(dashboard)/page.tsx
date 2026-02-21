@@ -7,20 +7,18 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { 
   TrendingUp, 
   Package, 
-  ArrowRight, 
   Store, 
   Globe, 
   BarChart3,
-  ShoppingCart,
-  Clock,
-  Truck
+  Truck,
+  Receipt // Ícone para representar nota/venda
 } from "lucide-react";
 import Link from "next/link";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
+import { subDays, format } from "date-fns";
 
 const fCurrency = (v: number) => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(v || 0);
 const fNum = (v: number) => new Intl.NumberFormat("pt-BR").format(v || 0);
-const fPercent = (v: number) => new Intl.NumberFormat("pt-BR", { style: "percent", minimumFractionDigits: 1 }).format(v || 0);
 
 const COLORS = ['#3b82f6', '#f97316', '#10b981', '#a855f7', '#f43f5e', '#eab308'];
 
@@ -28,13 +26,13 @@ export default function VisaoGeralPage() {
   const supabase = createClient();
   const { rawData, totalStats, loading } = useDashboard();
   
-  // Estados para Compras e Ticket Médio
   const [comprasStats, setComprasStats] = useState({ qtdPedidos: 0, valorTotal: 0 });
-  const [totalVendasUnicas, setTotalVendasUnicas] = useState(0);
+  // Novo estado para contagem de pedidos únicos (Vendas)
+  const [vendasUnicas, setVendasUnicas] = useState({ total: 0, loja: 0, site: 0 });
 
   useEffect(() => {
     async function fetchData() {
-      // 1. Busca os itens de pedidos em andamento para o card de Compras
+      // 1. Busca Compras em andamento
       const { data: pedidosRaw } = await supabase
         .from("view_pedidos_detalhados")
         .select("id_pedido, quantidade, custo_efetivo_pedido");
@@ -42,21 +40,59 @@ export default function VisaoGeralPage() {
       if (pedidosRaw) {
         const groups: Record<string, number> = {};
         pedidosRaw.forEach(item => {
-          const id = item.id_pedido;
-          const valorItem = Number(item.quantidade) * Number(item.custo_efetivo_pedido);
-          groups[id] = (groups[id] || 0) + valorItem;
+          groups[item.id_pedido] = (groups[item.id_pedido] || 0) + (Number(item.quantidade) * Number(item.custo_efetivo_pedido));
         });
-
         setComprasStats({
           qtdPedidos: Object.keys(groups).length,
           valorTotal: Object.values(groups).reduce((acc, val) => acc + val, 0)
+        });
+      }
+
+      // 2. BUSCA QUANTIDADE DE VENDAS ÚNICAS (Últimos 30 dias)
+      const dataCorte = format(subDays(new Date(), 30), "yyyy-MM-dd");
+      const { data: vendasRaw } = await supabase
+        .from("view_vendas_detalhadas")
+        .select("id_venda, canal_macro")
+        .gte("data_venda", dataCorte);
+
+      if (vendasRaw) {
+        const idsTotal = new Set();
+        const idsLoja = new Set();
+        const idsSite = new Set();
+
+        vendasRaw.forEach(v => {
+          idsTotal.add(v.id_venda);
+          if (v.canal_macro === "LOJA") idsLoja.add(v.id_venda);
+          if (v.canal_macro === "SITE") idsSite.add(v.id_venda);
+        });
+
+        setVendasUnicas({
+          total: idsTotal.size,
+          loja: idsLoja.size,
+          site: idsSite.size
         });
       }
     }
     fetchData();
   }, [supabase]);
 
-  // Lógica de Gráfico por Categoria
+  // Ticket Médio calculado por VENDA (AOV)
+  const ticketsMedios = useMemo(() => {
+    const totalVendas = vendasUnicas.total || 1; // evita divisão por zero
+    const totalLoja = vendasUnicas.loja || 1;
+    const totalSite = vendasUnicas.site || 1;
+
+    // Faturamento do site (Soma dos 3 subcanais do contexto)
+    const recSite = totalStats.bd_pf_30 + totalStats.bd_full_30 + totalStats.bd_cm_30;
+
+    return {
+      geral: totalStats.r30 / totalVendas,
+      loja: totalStats.bd_loja_30 / totalLoja,
+      site: recSite / totalSite
+    };
+  }, [totalStats, vendasUnicas]);
+
+  // Lógica de Gráfico por Categoria (Mantida)
   const categoryData = useMemo(() => {
     const catMap: Record<string, number> = {};
     rawData.forEach(item => {
@@ -66,57 +102,21 @@ export default function VisaoGeralPage() {
         catMap[cat] = (catMap[cat] || 0) + receita;
       }
     });
-
     return Object.entries(catMap)
       .map(([name, value]) => ({ name, value }))
       .sort((a, b) => b.value - a.value)
       .slice(0, 6);
   }, [rawData]);
 
-  const localStats = useMemo(() => {
-    let totalQtdVendas = 0;
-    let totalItensEstoque = 0;
-    const catMap: Record<string, number> = {};
-
-    rawData.forEach(item => {
-      // Soma a quantidade de peças vendidas nos últimos 30 dias (Site + Loja)
-      const qtdItem = Number(item.v_qtd_30d_site || 0) + Number(item.v_qtd_30d_loja || 0);
-      totalQtdVendas += qtdItem;
-      
-      totalItensEstoque += Number(item.est_total || 0);
-
-      const receitaTotal = Number(item.rec_30d_site || 0) + Number(item.rec_30d_loja || 0);
-      if (receitaTotal > 0) {
-        const cat = item.categoria || "Outros";
-        catMap[cat] = (catMap[cat] || 0) + receitaTotal;
-      }
-    });
-
-    const categoryData = Object.entries(catMap)
-      .map(([name, value]) => ({ name, value }))
-      .sort((a, b) => b.value - a.value)
-      .slice(0, 6);
-
-    return {
-      totalQtdVendas,
-      totalItensEstoque,
-      categoryData,
-      // Ticket Médio por PEÇA vendido (Igual à coluna 'TICKET' da página de vendas)
-      ticketMedio: totalQtdVendas > 0 ? totalStats.r30 / totalQtdVendas : 0
-    };
-  }, [rawData, totalStats.r30]);
-
   if (loading) return <div className="p-10 text-center animate-pulse text-slate-500 italic">Sincronizando painel geral...</div>;
 
   return (
     <div className="space-y-6 pb-10">
-
       <div className="flex flex-col gap-1">
         <h1 className="text-2xl font-bold text-slate-800">Painel de Controle</h1>
         <p className="text-slate-500 text-sm">Resumo operacional consolidado (30 dias)</p>
       </div>
 
-      {/* KPIS PRINCIPAIS */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* FATURAMENTO */}
         <Card className="border-none shadow-md bg-blue-600 text-white">
@@ -139,12 +139,21 @@ export default function VisaoGeralPage() {
           </CardContent>
         </Card>
 
-        {/* TICKET MÉDIO */}
+        {/* TICKET MÉDIO (POR VENDA) */}
         <Card className="border-none shadow-md bg-white">
-          <CardHeader className="pb-2"><CardTitle className="text-xs font-bold uppercase text-slate-400">Ticket Médio (Peça)</CardTitle></CardHeader>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-xs font-bold uppercase text-slate-400">Ticket Médio (Venda)</CardTitle>
+          </CardHeader>
           <CardContent>
-            <div className="text-2xl font-black text-slate-800">{fCurrency(localStats.ticketMedio)}</div>
-            <p className="text-[10px] mt-1 text-slate-400">Média por item ({fNum(localStats.totalQtdVendas)} peças)</p>
+            <div className="text-2xl font-black text-slate-800">{fCurrency(ticketsMedios.geral)}</div>
+            <div className="flex justify-between mt-2 text-[10px] text-slate-500 font-bold uppercase">
+              <span className="flex items-center gap-1 text-orange-600">
+                <Store size={10}/> {fCurrency(ticketsMedios.loja)}
+              </span>
+              <span className="flex items-center gap-1 text-blue-600">
+                <Globe size={10}/> {fCurrency(ticketsMedios.site)}
+              </span>
+            </div>
           </CardContent>
         </Card>
 
@@ -158,8 +167,8 @@ export default function VisaoGeralPage() {
         </Card>
       </div>
 
+      {/* RESTO DO CÓDIGO (GRÁFICOS E LINKS) MANTIDO IGUAL */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* GRÁFICO DE CATEGORIAS */}
         <Card className="lg:col-span-2 border-none shadow-md bg-white">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-bold text-slate-700 uppercase flex items-center gap-2">
@@ -189,10 +198,8 @@ export default function VisaoGeralPage() {
           </CardContent>
         </Card>
 
-        {/* ACESSOS RÁPIDOS */}
         <div className="space-y-4">
           <h3 className="font-bold text-slate-700 px-1 flex items-center gap-2 text-xs uppercase tracking-widest">Navegação</h3>
-          
           <Link href="/vendas" className="block group">
             <Card className="hover:border-blue-500 transition-all shadow-sm border-slate-100">
               <CardContent className="p-5 flex items-center gap-4">
@@ -201,7 +208,6 @@ export default function VisaoGeralPage() {
               </CardContent>
             </Card>
           </Link>
-
           <Link href="/estoque" className="block group">
             <Card className="hover:border-emerald-500 transition-all shadow-sm border-slate-100">
               <CardContent className="p-5 flex items-center gap-4">
@@ -210,7 +216,6 @@ export default function VisaoGeralPage() {
               </CardContent>
             </Card>
           </Link>
-
           <Link href="/compras" className="block group">
             <Card className="hover:border-orange-500 transition-all shadow-sm border-slate-100">
               <CardContent className="p-5 flex items-center gap-4">
@@ -219,7 +224,6 @@ export default function VisaoGeralPage() {
               </CardContent>
             </Card>
           </Link>
-
           <div className="bg-slate-900 rounded-xl p-4 text-white mt-6">
              <div className="flex items-center justify-between mb-4">
                <span className="text-[10px] uppercase font-black text-slate-400">Integrador</span>

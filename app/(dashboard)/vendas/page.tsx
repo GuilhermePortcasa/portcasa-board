@@ -107,6 +107,14 @@ function VendasContent() {
   const { kpis, chartData, topProducts, siteBreakdown } = useMemo(() => {
     let receita = 0, cmv = 0, lucro = 0, qtd = 0;
     let recSite = 0, recFull = 0, recCM = 0, recLoja = 0; 
+    
+    // Sets para contagem de vendas únicas (Ticket Médio)
+    const idsGeral = new Set();
+    const idsLoja = new Set();
+    const idsSitePadrao = new Set();
+    const idsFull = new Set();
+    const idsCM = new Set();
+
     const dailyMap: Record<string, any> = {};
     const parentMap: Record<string, any> = {};
 
@@ -116,11 +124,24 @@ function VendasContent() {
       lucro += Number(v.lucro);
       qtd += Number(v.qtd_vendida);
 
+      // Registro de IDs únicos para Ticket Médio
+      idsGeral.add(v.id_venda);
+
       if (v.canal_macro === "SITE") {
-        if (v.canal_detalhado === "FULL") recFull += Number(v.receita);
-        else if (v.canal_detalhado === "CASA_MODELO") recCM += Number(v.receita);
-        else recSite += Number(v.receita); 
-      } else recLoja += Number(v.receita);
+        if (v.canal_detalhado === "FULL") {
+          recFull += Number(v.receita);
+          idsFull.add(v.id_venda);
+        } else if (v.canal_detalhado === "CASA_MODELO") {
+          recCM += Number(v.receita);
+          idsCM.add(v.id_venda);
+        } else {
+          recSite += Number(v.receita); 
+          idsSitePadrao.add(v.id_venda);
+        }
+      } else {
+        recLoja += Number(v.receita);
+        idsLoja.add(v.id_venda);
+      }
 
       const dataStr = v.data_venda;
       if (!dailyMap[dataStr]) dailyMap[dataStr] = { data: dataStr, receita: 0, lucro: 0 };
@@ -151,6 +172,7 @@ function VendasContent() {
       .map((d: any) => ({ ...d, data_fmt: format(new Date(d.data + 'T00:00:00'), "dd/MM") }));
 
     let top = Object.values(parentMap);
+    // ... (sua lógica de sort do topProducts permanece igual)
     top.sort((a: any, b: any) => {
       let valA = a[sortConfig.key];
       let valB = b[sortConfig.key];
@@ -174,8 +196,18 @@ function VendasContent() {
     }));
 
     return {
-      kpis: { receita, cmv, lucro, qtd, margem: receita > 0 ? lucro / receita : 0, markup: cmv > 0 ? lucro / cmv : 0 },
-      siteBreakdown: { site: recSite, full: recFull, cm: recCM, loja: recLoja },
+      kpis: { 
+        receita, cmv, lucro, qtd, 
+        margem: receita > 0 ? lucro / receita : 0, 
+        markup: cmv > 0 ? lucro / cmv : 0,
+        vendasCount: idsGeral.size 
+      },
+      siteBreakdown: { 
+        site: recSite, vSite: idsSitePadrao.size,
+        full: recFull, vFull: idsFull.size,
+        cm: recCM, vCM: idsCM.size,
+        loja: recLoja, vLoja: idsLoja.size
+      },
       chartData: chart,
       topProducts: top
     };
@@ -257,19 +289,77 @@ function VendasContent() {
                   <CardHeader className="pb-1 pt-3 text-[10px] font-bold text-slate-500 uppercase flex flex-row items-center justify-between">
                     <span>Receita Líq. {(canalAtivo === "site" || canalAtivo === "geral") && <span className="text-blue-500 lowercase">(ver)</span>}</span>
                   </CardHeader>
-                  <CardContent className="text-xl font-black text-slate-800 flex items-center justify-between pb-3">
-                    {fCurrency(kpis.receita)} <DollarSign className="text-blue-100" size={20} />
+                  <CardContent className="pb-3">
+                    <div className="text-xl font-black text-slate-800 flex items-center justify-between">
+                      {fCurrency(kpis.receita)} <DollarSign className="text-blue-100" size={20} />
+                    </div>
+                    {/* TICKET MÉDIO NO CARD PRINCIPAL */}
+                    <div className="text-[11px] text-blue-600 font-bold mt-1">
+                      {fCurrency(kpis.receita / (kpis.vendasCount || 1))} 
+                      <span className="text-slate-400 font-normal uppercase text-[9px] ml-1">Ticket Médio</span>
+                    </div>
                   </CardContent>
                 </Card>
               </DialogTrigger>
               <DialogContent>
-                <DialogHeader><DialogTitle>Detalhamento de Receita Líquida</DialogTitle></DialogHeader>
+                <DialogHeader><DialogTitle>Detalhamento de Receita Líquida e Ticket Médio</DialogTitle></DialogHeader>
                 <div className="space-y-4 pt-4 text-sm">
-                  {canalAtivo === "geral" && <div className="flex justify-between border-b pb-2"><span className="font-medium text-orange-600">Loja Física:</span> <span className="text-orange-600 font-bold">{fCurrency(siteBreakdown.loja)}</span></div>}
-                  <div className="flex justify-between border-b pb-2 text-slate-600"><span className="font-medium">Site Portfio (Padrão):</span> <span>{fCurrency(siteBreakdown.site)}</span></div>
-                  <div className="flex justify-between border-b pb-2 text-slate-600"><span className="font-medium">Mercado Livre FULL:</span> <span>{fCurrency(siteBreakdown.full)}</span></div>
-                  <div className="flex justify-between border-b pb-2 text-slate-600"><span className="font-medium">Casa Modelo:</span> <span>{fCurrency(siteBreakdown.cm)}</span></div>
-                  <div className="flex justify-between pt-2 text-lg font-black text-slate-800 border-t-2 border-slate-900 mt-2"><span>TOTAL:</span> <span>{fCurrency(kpis.receita)}</span></div>
+                  {canalAtivo === "geral" && (
+                    <div className="flex justify-between border-b pb-2">
+                      <div className="flex flex-col">
+                        <span className="font-medium text-orange-600">Loja Física:</span>
+                        <span className="text-[10px] text-slate-400">{fNum(siteBreakdown.vLoja)} vendas</span>
+                      </div>
+                      <div className="flex flex-col text-right">
+                        <span className="text-orange-600 font-bold">{fCurrency(siteBreakdown.loja)}</span>
+                        <span className="text-[10px] font-bold text-slate-500">TM: {fCurrency(siteBreakdown.loja / (siteBreakdown.vLoja || 1))}</span>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="flex justify-between border-b pb-2 text-slate-600">
+                    <div className="flex flex-col">
+                      <span className="font-medium">Site Portfio (Padrão):</span>
+                      <span className="text-[10px] text-slate-400">{fNum(siteBreakdown.vSite)} vendas</span>
+                    </div>
+                    <div className="flex flex-col text-right">
+                      <span className="font-bold">{fCurrency(siteBreakdown.site)}</span>
+                      <span className="text-[10px] font-bold text-slate-400">TM: {fCurrency(siteBreakdown.site / (siteBreakdown.vSite || 1))}</span>
+                    </div>
+                  </div>
+
+                  <div className="flex justify-between border-b pb-2 text-slate-600">
+                    <div className="flex flex-col">
+                      <span className="font-medium">Mercado Livre FULL:</span>
+                      <span className="text-[10px] text-slate-400">{fNum(siteBreakdown.vFull)} vendas</span>
+                    </div>
+                    <div className="flex flex-col text-right">
+                      <span className="font-bold">{fCurrency(siteBreakdown.full)}</span>
+                      <span className="text-[10px] font-bold text-slate-400">TM: {fCurrency(siteBreakdown.full / (siteBreakdown.vFull || 1))}</span>
+                    </div>
+                  </div>
+
+                  <div className="flex justify-between border-b pb-2 text-slate-600">
+                    <div className="flex flex-col">
+                      <span className="font-medium">Casa Modelo:</span>
+                      <span className="text-[10px] text-slate-400">{fNum(siteBreakdown.vCM)} vendas</span>
+                    </div>
+                    <div className="flex flex-col text-right">
+                      <span className="font-bold">{fCurrency(siteBreakdown.cm)}</span>
+                      <span className="text-[10px] font-bold text-slate-400">TM: {fCurrency(siteBreakdown.cm / (siteBreakdown.vCM || 1))}</span>
+                    </div>
+                  </div>
+
+                  <div className="flex justify-between pt-2 text-lg font-black text-slate-800 border-t-2 border-slate-900 mt-2">
+                    <div className="flex flex-col">
+                      <span>TOTAL:</span>
+                      <span className="text-[10px] text-slate-400 font-normal">{fNum(kpis.vendasCount)} vendas totais</span>
+                    </div>
+                    <div className="flex flex-col text-right">
+                      <span>{fCurrency(kpis.receita)}</span>
+                      <span className="text-[11px] text-blue-600">Ticket Médio: {fCurrency(kpis.receita / (kpis.vendasCount || 1))}</span>
+                    </div>
+                  </div>
                 </div>
               </DialogContent>
             </Dialog>
