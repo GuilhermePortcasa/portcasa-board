@@ -177,13 +177,29 @@ export default function IndexCVPage() {
           status = "TRANSF. DO SITE";
           badgeClass = "bg-blue-100 text-blue-700 border-blue-600 cursor-pointer hover:bg-blue-200 transition-colors shadow-sm";
           sugestaoQtd = Math.min(sugestaoQtd, exc_site); 
-          detalheOrigem = { nome: "Site (Depósito Padrão)", est_disponivel: est_site_puro, exc_calculado: exc_site, giro: giro_site };
+          detalheOrigem = { 
+            origemNome: "Site (Depósito)", 
+            origemEstoque: est_site_puro, 
+            origemExcesso: exc_site, 
+            destinoNome: "Loja Física",
+            destinoEstoque: est_loja,
+            destinoTransito: transito_loja,
+            destinoGiro: giro_loja
+          };
         } else if ((canal === "site" || canal === "geral") && exc_loja > 0) {
           acaoMacro = "transferir";
           status = "TRANSF. DA LOJA";
           badgeClass = "bg-blue-100 text-blue-700 border-blue-600 cursor-pointer hover:bg-blue-200 transition-colors shadow-sm";
           sugestaoQtd = Math.min(sugestaoQtd, exc_loja);
-          detalheOrigem = { nome: "Loja Física", est_disponivel: est_loja, exc_calculado: exc_loja, giro: giro_loja };
+          detalheOrigem = { 
+            origemNome: "Loja Física", 
+            origemEstoque: est_loja, 
+            origemExcesso: exc_loja, 
+            destinoNome: "Site (Depósito)",
+            destinoEstoque: est_site_puro,
+            destinoTransito: transito_site,
+            destinoGiro: giro_site
+          };
         }
       }
 
@@ -411,7 +427,7 @@ export default function IndexCVPage() {
                   </TableCell>
 
                   <TableCell className="text-center">
-                    {/* 4. MODAL ADAPTADO COM O LINK PARA A PÁGINA DE COMPRAS */}
+                    {/* 4. MODAIS ADAPTADOS (TRANSFERÊNCIA E ANTECIPAÇÃO) */}
                     {row.acaoMacro === "transferir" && row.detalheOrigem ? (
                       <Popover>
                         <PopoverTrigger>
@@ -419,28 +435,33 @@ export default function IndexCVPage() {
                             {row.status}
                           </Badge>
                         </PopoverTrigger>
-                        <PopoverContent className="w-64 text-left p-3 text-sm shadow-xl border-yellow-200" side="top">
+                        <PopoverContent className="w-72 text-left p-3 text-sm shadow-xl border-blue-200" side="top">
                           <div className="font-bold mb-3 pb-2 border-b text-slate-700 flex items-center gap-2">
-                            <AlertTriangle size={14} className="text-yellow-600" /> Risco de Ruptura
+                            <ArrowDownUp size={14} className="text-blue-600" /> Justificativa de Transferência
                           </div>
-                          <div className="space-y-1.5 text-slate-600 text-xs">
-                            <div className="flex justify-between"><span>Estoque Físico:</span> <span className="font-semibold">{fNum(row.detalheOrigem.estFisico)} un</span></div>
-                            <div className="flex justify-between"><span>Cob. Física Atual:</span> <span className="font-semibold">{row.detalheOrigem.cobFisica} dias</span></div>
-                            <div className="flex justify-between text-yellow-700 mt-2 pt-2 border-t border-yellow-100 font-bold">
-                              <span>Chegada do Pedido:</span> <span>em {row.detalheOrigem.diasChegada} dias</span>
+                          <div className="space-y-2 text-slate-600 text-xs">
+                            
+                            {/* Bloco de Origem (Onde está sobrando) */}
+                            <div className="bg-blue-50/50 p-2 rounded border border-blue-100">
+                              <div className="font-bold text-[10px] uppercase text-blue-500 mb-1">Tirar de: {row.detalheOrigem.origemNome}</div>
+                              <div className="flex justify-between"><span>Estoque Físico Atual:</span> <span className="font-semibold">{fNum(row.detalheOrigem.origemEstoque)} un</span></div>
+                              <div className="flex justify-between text-purple-600 font-bold mt-1 pt-1 border-t border-blue-100/50">
+                                <span>Excesso Calculado:</span> <span>{fNum(row.detalheOrigem.origemExcesso)} un</span>
+                              </div>
                             </div>
-                            <div className="flex justify-between text-red-600 mt-1 font-bold">
-                              <span>Venda Perdida (Risco):</span> <span>{Math.ceil(row.detalheOrigem.perda)} un</span>
+
+                            {/* Bloco de Destino (Onde está faltando) */}
+                            <div className="bg-orange-50/50 p-2 rounded border border-orange-100">
+                              <div className="font-bold text-[10px] uppercase text-orange-500 mb-1">Mandar para: {row.detalheOrigem.destinoNome}</div>
+                              <div className="flex justify-between"><span>Estoque Físico Atual:</span> <span className="font-semibold text-red-500">{fNum(row.detalheOrigem.destinoEstoque)} un</span></div>
+                              <div className="flex justify-between"><span>Giro Diário:</span> <span className="font-semibold">{row.detalheOrigem.destinoGiro.toFixed(1)} un/dia</span></div>
+                              {row.detalheOrigem.destinoTransito > 0 && (
+                                <div className="flex justify-between text-yellow-600 mt-1 font-bold">
+                                  <span>Compras a Caminho:</span> <span>{fNum(row.detalheOrigem.destinoTransito)} un</span>
+                                </div>
+                              )}
                             </div>
-                          </div>
-                          
-                          {/* BOTÃO QUE LINKA PARA COMPRAS */}
-                          <div className="mt-4 pt-3 border-t">
-                            <Link href={`/compras?busca=${encodeURIComponent(row.sku)}&canal=${row.detalheOrigem.destinoReq}`} target="_blank">
-                              <Button size="sm" className="w-full bg-yellow-100 hover:bg-yellow-200 text-yellow-800 border border-yellow-300 gap-2">
-                                Localizar Pedido <ExternalLink size={14} />
-                              </Button>
-                            </Link>
+                            
                           </div>
                         </PopoverContent>
                       </Popover>
