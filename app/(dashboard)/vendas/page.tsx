@@ -38,11 +38,23 @@ function VendasContent() {
   const [searchTerm, setSearchTerm] = useState(initialSearch);
   const [sortConfig, setSortConfig] = useState<{ key: string, direction: 'asc' | 'desc' }>({ key: 'lucro', direction: 'desc' });
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
+// NOVO: Estado do Filtro de Fornecedor
+  const [filterForn, setFilterForn] = useState("all");
 
   const [activePreset, setActivePreset] = useState<string>(initialSearch ? "tudo" : "30d");
   const [date, setDate] = useState<DateRange | undefined>(
     initialSearch ? undefined : { from: subDays(new Date(), 30), to: new Date() }
   );
+
+  // NOVO: Extrai fornecedores únicos para o Select
+  const suppliers = useMemo(() => {
+    if (!salesData) return [];
+    // Filtra undefined/null, limpa espaços extras e remove duplicados usando Set
+    const list = salesData
+      .map(v => v.fornecedor ? v.fornecedor.trim() : null)
+      .filter(Boolean);
+    return Array.from(new Set(list)).sort();
+  }, [salesData]);
 
   // Controle de Carga Inicial Segura
   useEffect(() => {
@@ -74,7 +86,12 @@ function VendasContent() {
 
   // Filtragem dos dados (Garantindo que salesData é sempre array)
   const filteredData = useMemo(() => {
-    let list = Array.isArray(salesData) ? [...salesData] : []; // Segurança Extra contra undefined
+    let list = Array.isArray(salesData) ? [...salesData] : []; 
+
+    // NOVO: Filtro de Fornecedor
+    if (filterForn !== "all") {
+      list = list.filter(v => v.fornecedor === filterForn);
+    }
 
     if (canalAtivo === "loja") list = list.filter(v => v.canal_macro === "LOJA");
     else if (canalAtivo === "site") {
@@ -84,6 +101,7 @@ function VendasContent() {
       else if (subCanalSite === "casamodelo") list = list.filter(v => v.canal_detalhado === "CASA_MODELO");
     }
 
+    // ... (o resto do filtro de data e busca continua igual)
     if (date?.from) {
       list = list.filter(item => {
         const itemDate = new Date(item.data_venda + 'T00:00:00');
@@ -101,7 +119,7 @@ function VendasContent() {
       );
     }
     return list;
-  }, [salesData, date, canalAtivo, subCanalSite, searchTerm]);
+  }, [salesData, date, canalAtivo, subCanalSite, searchTerm, filterForn]); // NOVO: Adicionado filterForn nas dependências
 
   // Processamento e Agrupamento
   const { kpis, chartData, topProducts, siteBreakdown } = useMemo(() => {
@@ -233,10 +251,26 @@ function VendasContent() {
         </div>
         <div className="flex flex-col w-full xl:w-auto gap-2">
           <div className="flex flex-col sm:flex-row items-center gap-2 w-full justify-end">
+            
+            {/* BUSCA DE TEXTO */}
             <div className="relative w-full sm:w-[250px]">
               <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground"/>
               <Input placeholder="Buscar produto..." className="pl-9 h-8 text-xs" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
             </div>
+
+            {/* NOVO: SELECT DE FORNECEDOR */}
+            <div className="relative w-full sm:w-[180px]">
+              <select
+                value={filterForn}
+                onChange={(e) => setFilterForn(e.target.value)}
+                className="flex h-8 w-full appearance-none items-center rounded-md border border-slate-200 bg-white px-3 py-1 text-xs focus:ring-2 focus:ring-blue-500 cursor-pointer"
+              >
+                <option value="all">Todos Fornecedores</option>
+                {suppliers.map((f: any) => (<option key={f} value={f}>{f}</option>))}
+              </select>
+            </div>
+
+            {/* ABAS DE CANAL GERAL/LOJA/SITE */}
             <Tabs value={canalAtivo} onValueChange={(v: any) => { setCanalAtivo(v); setSubCanalSite("todos"); }} className="w-full sm:w-auto">
               <TabsList className="grid grid-cols-3 h-8">
                 <TabsTrigger value="geral" className="text-[11px]">Geral</TabsTrigger>
@@ -409,10 +443,6 @@ function VendasContent() {
           <Card className="overflow-hidden border-none shadow-xl">
             <div className="p-4 bg-slate-900 text-white flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
               <div className="flex items-center gap-2 font-bold"><PackageOpen size={18} /> Performance de Famílias</div>
-              <div className="relative w-full sm:w-[300px]">
-                <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400"/>
-                <Input placeholder="Buscar produto ou SKU..." className="pl-9 h-9 bg-slate-800 border-slate-700 text-white" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
-              </div>
             </div>
             <Table>
               <TableHeader className="bg-slate-100">

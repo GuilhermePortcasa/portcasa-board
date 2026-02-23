@@ -51,7 +51,7 @@ export function Sidebar() {
         isCollapsed ? "w-full md:w-16" : "w-full md:w-64" 
       )}
     >
-      {/* Botão de Toggle (Retração) - Oculto no Mobile, pois lá usa-se o Hamburguer */}
+      {/* Botão de Toggle (Retração) - Oculto no Mobile */}
       <Button
         variant="ghost"
         size="icon"
@@ -63,17 +63,20 @@ export function Sidebar() {
 
       {/* Logo */}
       <div className={cn("p-6 border-b bg-primary/5 flex items-center h-[80px]", isCollapsed && "md:justify-center md:p-2")}>
-        {/* No mobile nunca mostramos o logo "encolhido" (P), sempre o completo */}
-        <div className={cn("hidden md:block", !isCollapsed && "hidden")}>
+        
+        {/* LOGO ENCOLHIDO (P) - Só aparece no PC e apenas quando estiver colapsado */}
+        <div className={cn("hidden", isCollapsed && "md:block")}>
            <h1 className="text-xl font-bold text-primary">P</h1>
         </div>
         
-        <div className={cn(isCollapsed ? "md:hidden block" : "block")}>
+        {/* LOGO COMPLETO (PORTCasa) - Aparece sempre no Mobile. No PC, só aparece se NÃO estiver colapsado */}
+        <div className={cn("block", isCollapsed && "md:hidden")}>
           <h1 className="text-2xl font-bold text-primary tracking-tight">
             PORT<span className="font-light">Casa</span>
           </h1>
           <p className="text-xs text-muted-foreground whitespace-nowrap">CAMA • MESA • BANHO</p>
         </div>
+
       </div>
 
       {/* Navegação */}
@@ -97,7 +100,7 @@ export function Sidebar() {
                   title={isCollapsed ? item.label : undefined}
                 >
                   <Icon className={cn("h-5 w-5 min-w-[20px]", isActive && "text-white")} />
-                  {/* No mobile, os textos sempre aparecem */}
+                  {/* No mobile, os textos sempre aparecem. No PC, somem ao colapsar */}
                   <span className={cn("truncate", isCollapsed ? "md:hidden block" : "block")}>
                     {item.label}
                   </span>
@@ -121,8 +124,13 @@ export function Sidebar() {
           )}
         >
           
-          {/* Versão Completa (Sempre visível no Mobile) */}
-          <div className={cn("flex items-center gap-3 w-full", isCollapsed ? "md:hidden flex" : "flex")}>
+          {/* Ícone de LogOut (Aparece sozinho no PC quando colapsado) */}
+          <div className={cn("hidden", isCollapsed && "md:flex")}>
+             <LogOut className="h-5 w-5 text-red-500/70" />
+          </div>
+
+          {/* Versão Completa do Botão (Sempre visível no Mobile, ou no PC Expandido) */}
+          <div className={cn("flex items-center gap-3 w-full", isCollapsed && "md:hidden")}>
             <div className="h-8 w-8 rounded-full bg-slate-200 flex items-center justify-center text-slate-500 shrink-0">
               <User size={16} />
             </div>
@@ -134,6 +142,7 @@ export function Sidebar() {
             </div>
             <LogOut className="h-4 w-4 shrink-0 text-red-500/70" />
           </div>
+
         </button>
       </div>
     </div>

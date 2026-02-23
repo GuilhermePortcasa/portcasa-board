@@ -24,7 +24,7 @@ const COLORS = ['#3b82f6', '#f97316', '#10b981', '#a855f7', '#f43f5e', '#eab308'
 
 export default function VisaoGeralPage() {
   const supabase = createClient();
-  const { rawData, totalStats, loading } = useDashboard();
+  const { rawData, totalStats, loading, filterForn, filterCat } = useDashboard();
   
   const [comprasStats, setComprasStats] = useState({ qtdPedidos: 0, valorTotal: 0 });
   // Novo estado para contagem de pedidos únicos (Vendas)
@@ -32,7 +32,7 @@ export default function VisaoGeralPage() {
 
   useEffect(() => {
     async function fetchData() {
-      // 1. Busca Compras em andamento
+      // 1. Busca Compras em andamento (Inalterado)
       const { data: pedidosRaw } = await supabase
         .from("view_pedidos_detalhados")
         .select("id_pedido, quantidade, custo_efetivo_pedido");
@@ -48,12 +48,19 @@ export default function VisaoGeralPage() {
         });
       }
 
-      // 2. BUSCA QUANTIDADE DE VENDAS ÚNICAS (Últimos 30 dias)
+      // 2. BUSCA QUANTIDADE DE VENDAS ÚNICAS (Agora filtrando por Fornecedor e Categoria)
       const dataCorte = format(subDays(new Date(), 30), "yyyy-MM-dd");
-      const { data: vendasRaw } = await supabase
+      
+      let query = supabase
         .from("view_vendas_detalhadas")
         .select("id_venda, canal_macro")
         .gte("data_venda", dataCorte);
+
+      // FILTROS ATIVOS NA QUERY
+      if (filterForn !== "all") query = query.eq("fornecedor", filterForn);
+      if (filterCat !== "all") query = query.eq("categoria", filterCat);
+
+      const { data: vendasRaw } = await query;
 
       if (vendasRaw) {
         const idsTotal = new Set();
@@ -74,21 +81,20 @@ export default function VisaoGeralPage() {
       }
     }
     fetchData();
-  }, [supabase]);
+  }, [supabase, filterForn, filterCat]); // Filtros adicionados às dependências
 
   // Ticket Médio calculado por VENDA (AOV)
   const ticketsMedios = useMemo(() => {
-    const totalVendas = vendasUnicas.total || 1; // evita divisão por zero
-    const totalLoja = vendasUnicas.loja || 1;
-    const totalSite = vendasUnicas.site || 1;
+    // Pegamos a receita total filtrada que vem do Contexto Global
+    const faturamentoGeral = totalStats.r30;
+    const faturamentoLoja = totalStats.bd_loja_30;
+    const faturamentoSite = totalStats.bd_pf_30 + totalStats.bd_full_30 + totalStats.bd_cm_30;
 
-    // Faturamento do site (Soma dos 3 subcanais do contexto)
-    const recSite = totalStats.bd_pf_30 + totalStats.bd_full_30 + totalStats.bd_cm_30;
-
+    // Calculamos o ticket dividindo pelas vendas únicas onde os itens filtrados aparecem
     return {
-      geral: totalStats.r30 / totalVendas,
-      loja: totalStats.bd_loja_30 / totalLoja,
-      site: recSite / totalSite
+      geral: vendasUnicas.total > 0 ? faturamentoGeral / vendasUnicas.total : 0,
+      loja: vendasUnicas.loja > 0 ? faturamentoLoja / vendasUnicas.loja : 0,
+      site: vendasUnicas.site > 0 ? faturamentoSite / vendasUnicas.site : 0
     };
   }, [totalStats, vendasUnicas]);
 
