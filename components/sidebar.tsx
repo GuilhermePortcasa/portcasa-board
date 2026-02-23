@@ -18,6 +18,7 @@ import {
   User
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { HeaderNotificacoes } from "@/components/header-notificacoes";
 
 const sidebarItems = [
   { icon: History, label: "Histórico", href: "/historico" },
@@ -111,8 +112,17 @@ export function Sidebar() {
         </ul>
       </nav>
 
-      {/* Footer / Botão Sair */}
-      <div className={cn("p-4 border-t text-sm h-[70px] flex items-center", isCollapsed ? "md:justify-center" : "")}>
+      {/* Footer / Notificações / Botão Sair */}
+      <div className={cn("p-4 border-t flex flex-col gap-3", isCollapsed ? "md:items-center" : "")}>
+        
+        {/* 🔔 SINO DE NOTIFICAÇÕES (Integrado na Sidebar) */}
+        <div className={cn("flex items-center w-full", isCollapsed ? "md:justify-center" : "justify-between px-2")}>
+          <div className={cn("text-xs font-bold text-slate-500 uppercase tracking-wider", isCollapsed && "md:hidden")}>
+            Avisos
+          </div>
+          <HeaderNotificacoes />
+        </div>
+
         <button 
           onClick={handleLogout}
           disabled={isLoggingOut}

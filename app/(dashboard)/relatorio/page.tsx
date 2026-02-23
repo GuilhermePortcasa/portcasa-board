@@ -13,7 +13,7 @@ const fCurrency = (v: number) => new Intl.NumberFormat("pt-BR", { style: "curren
 const fNum = (v: number) => new Intl.NumberFormat("pt-BR").format(v || 0);
 
 // 1. ORDEM OFICIAL DE TAMANHOS (Adicionado INFANTIL antes de SOLTEIRO)
-const ORDEM_TAMANHOS = ["INFANTIL", "SOLTEIRO", "CASAL", "QUEEN", "KING", "ROSTO", "BANHO", "BANHÃO"];
+const ORDEM_TAMANHOS = ["INFANTIL", "SOLTEIRO", "CASAL", "QUEEN", "KING", "LAVABO", "ROSTO", "BANHO", "BANHÃO"];
 
 export default function RelatorioMatrizPage() {
   const { rawData, loading } = useDashboard();

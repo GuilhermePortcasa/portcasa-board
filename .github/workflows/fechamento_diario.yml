@@ -1,0 +1,42 @@
+name: Fechamento Diário de Vendas
+
+on:
+  # Executa automaticamente todos os dias às 23:55 (Horário de Brasília) -> 02:55 UTC
+  schedule:
+    - cron: '55 2 * * *'
+  
+  # Permite que você rode o script manualmente no GitHub quando quiser testar
+  workflow_dispatch:
+
+jobs:
+  rodar-fechamento:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Baixa o código do repositório
+      - name: Checkout do código
+        uses: actions/checkout@v4
+
+      # 2. Configura o Python
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      # 3. Instala as dependências (requests)
+      - name: Instalar dependências
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests
+
+      # 4. Executa o script
+      - name: Rodar script de fechamento
+        env:
+          # Injeta as variáveis de ambiente necessárias para o bling_service.py
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          # Adicione outras chaves abaixo caso seu bling_service.py precise (ex: BLING_CLIENT_ID)
+        run: |
+          # Define o PYTHONPATH para a raiz para evitar erros de importação do bling_service
+          export PYTHONPATH=$PYTHONPATH:$(pwd)
+          python scripts/fechamento_diario.py
