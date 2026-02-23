@@ -84,7 +84,7 @@ function VendasContent() {
     setSortConfig({ key, direction });
   };
 
-  // Filtragem dos dados (Garantindo que salesData é sempre array)
+// Filtragem dos dados (Garantindo que salesData é sempre array)
   const filteredData = useMemo(() => {
     let list = Array.isArray(salesData) ? [...salesData] : []; 
 
@@ -101,12 +101,18 @@ function VendasContent() {
       else if (subCanalSite === "casamodelo") list = list.filter(v => v.canal_detalhado === "CASA_MODELO");
     }
 
-    // ... (o resto do filtro de data e busca continua igual)
+    // CORREÇÃO: Filtragem Segura de Datas, ignorando problemas de fuso horário
     if (date?.from) {
+      // Pega os dias no formato AAAA-MM-DD para comparar como string (infalível contra fuso)
+      const dataInicioStr = format(date.from, "yyyy-MM-dd");
+      const dataFimStr = date.to ? format(date.to, "yyyy-MM-dd") : dataInicioStr;
+
       list = list.filter(item => {
-        const itemDate = new Date(item.data_venda + 'T00:00:00');
-        const endDay = date.to ? startOfDay(date.to) : startOfDay(date.from!);
-        return isWithinInterval(itemDate, { start: startOfDay(date.from!), end: endDay });
+        if (!item.data_venda) return false;
+        // Pega apenas a parte da data "YYYY-MM-DD" do banco (ignora horas se houver)
+        const vendaDateStr = item.data_venda.substring(0, 10);
+        
+        return vendaDateStr >= dataInicioStr && vendaDateStr <= dataFimStr;
       });
     }
 
@@ -118,9 +124,10 @@ function VendasContent() {
         (v.sku && v.sku.toLowerCase().includes(lowerSearch))
       );
     }
+    
     return list;
-  }, [salesData, date, canalAtivo, subCanalSite, searchTerm, filterForn]); // NOVO: Adicionado filterForn nas dependências
-
+  }, [salesData, date, canalAtivo, subCanalSite, searchTerm, filterForn]);
+  
   // Processamento e Agrupamento
   const { kpis, chartData, topProducts, siteBreakdown } = useMemo(() => {
     let receita = 0, cmv = 0, lucro = 0, qtd = 0;

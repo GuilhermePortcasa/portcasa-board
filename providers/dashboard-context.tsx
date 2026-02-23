@@ -25,7 +25,9 @@ interface DashboardContextType {
 const DashboardContext = createContext<DashboardContextType>({} as DashboardContextType);
 
 export function DashboardProvider({ children }: { children: ReactNode }) {
-  const supabase = createClient();
+  // Memoiza o client do Supabase para ele não ser recriado
+  const supabase = useMemo(() => createClient(), []);
+  
   const [rawData, setRawData] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -37,10 +39,12 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   const [filterCat, setFilterCat] = useState("all");
 
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
+  const isFirstLoadRef = useRef(true);
 
-  // 1. FETCH SIMPLIFICADO (Carga Única)
-  const fetchAll = async (isSilent = false) => {
+  // 1. FETCH SIMPLIFICADO (Carga Única) - Agora usando useCallback puro sem dependências mutáveis
+  const fetchAll = useCallback(async (isSilent = false) => {
     if (!isSilent) setLoading(true); 
+    else setIsRefreshing(true);
     
     try {
       console.time("Tempo de Carga da View");
@@ -51,14 +55,14 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
         
       if (error) throw error;
       
-      // SOLUÇÃO BLINDADA: Remove acentos, espaços duplos e força maiúsculas
+      // Normalização
       const normalizedData = (data || []).map(item => {
         let fornLimpo = item.fornecedor;
         if (fornLimpo) {
           fornLimpo = String(fornLimpo)
-            .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // Tira acentos (ã -> a)
-            .toUpperCase() // Tudo maiúsculo
-            .replace(/\s+/g, ' ') // Se tiver 2 espaços seguidos, vira 1 só
+            .normalize("NFD").replace(/[\u0300-\u036f]/g, "") 
+            .toUpperCase() 
+            .replace(/\s+/g, ' ') 
             .trim();
         }
         return { ...item, fornecedor: fornLimpo };
@@ -70,33 +74,33 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       console.error("Erro ao buscar dados da View:", err);
     } finally {
       setLoading(false);
+      setIsRefreshing(false);
     }
-  };
+  }, [supabase]); // Depende apenas do Supabase agora
 
-  // 2. REFRESH (Apenas busca de novo, pois a View já calcula tudo em tempo real)
-  const refreshDatabase = async () => {
-    setIsRefreshing(true);
-    try {
-        await fetchAll(true); // Chamada silenciosa para não piscar a tela
-    } finally {
-        setIsRefreshing(false);
-    }
-  };
+  // 2. REFRESH EXPOSTO AO CONTEXTO
+  const refreshDatabase = useCallback(async () => {
+    await fetchAll(true);
+  }, [fetchAll]);
 
-  // 3. REALTIME ATIVADO
+  // 3. REALTIME BLINDADO (Conecta uma vez e atualiza no background)
   useEffect(() => {
-    fetchAll(); // Carga inicial
+    // Carrega a primeira vez se for o load inicial
+    if (isFirstLoadRef.current) {
+        fetchAll(false);
+        isFirstLoadRef.current = false;
+    }
 
-    // Ouve alterações nas tabelas para atualizar o Dashboard automaticamente
+    // Canal global ouve mudanças genéricas
     const channel = supabase.channel('global-db-changes')
       .on('postgres_changes', 
         { event: '*', schema: 'public' }, 
         () => {
           if (debounceRef.current) clearTimeout(debounceRef.current);
           debounceRef.current = setTimeout(() => {
-            console.log("🔄 Alteração detectada no banco. Atualizando a View...");
-            refreshDatabase(); 
-          }, 3000); // Espera 3 segundos após a última mudança para recalcular
+            console.log("🔄 Alteração detectada no banco. Atualizando a View global em background...");
+            fetchAll(true); // Sempre silencioso no realtime
+          }, 3000);
       })
       .subscribe();
 
@@ -104,7 +108,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       if (debounceRef.current) clearTimeout(debounceRef.current);
       supabase.removeChannel(channel);
     };
-  }, []);
+  }, [fetchAll, supabase]); // O lint fica feliz e a conexão fica estável
 
   // --- FUNÇÃO AUXILIAR: Verifica se o produto pertence ao canal ativo ---
   const isProductInCanal = useCallback((p: any, c: string) => {
@@ -142,10 +146,8 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
         }
     });
 
-    // Filtra a base primária pelo Canal
     let filtered = rawData.filter(p => isProductInCanal(p, canal));
 
-    // Aplica os filtros de Categoria e Fornecedor
     if (filterForn !== "all") filtered = filtered.filter(p => p.fornecedor === filterForn);
     if (filterCat !== "all") filtered = filtered.filter(p => p.categoria === filterCat);
 
@@ -174,9 +176,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
                 sku: mainSku,
                 nome: key,
                 isParent: true,
-                
                 hasVariations: items.length > 1 || items.some(i => i.nome.trim() !== (i.nome_pai || "").trim()),
-                
                 children: [],
                 est_total: 0, est_loja: 0, est_site: 0, est_full: 0,
                 val_est_site: 0, val_est_full: 0, val_est_loja: 0,
@@ -204,7 +204,6 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
 
                 group.children.push({ ...p, isParent: false, qtd_ped_atual: pedItem });
 
-                // Lógica de Custo Dobrado (Kit)
                 if (p.tipo !== 'E') {
                     group.est_total += estTotal; group.est_loja += estLoja;
                     group.est_site += estSite; group.est_full += estFull;
@@ -274,19 +273,13 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     });
   }, [processedData]);
 
-// --- AUTO-LIMPEZA DE FILTROS ---
-  // Se o usuário mudar de canal ou de categoria/fornecedor, verificamos se o filtro 
-  // atual ainda é válido. Se não for, resetamos para "all".
+  // --- AUTO-LIMPEZA DE FILTROS ---
   useEffect(() => {
-    if (filterForn !== "all" && !suppliers.includes(filterForn)) {
-      setFilterForn("all");
-    }
+    if (filterForn !== "all" && !suppliers.includes(filterForn)) setFilterForn("all");
   }, [suppliers, filterForn]);
 
   useEffect(() => {
-    if (filterCat !== "all" && !categories.includes(filterCat)) {
-      setFilterCat("all");
-    }
+    if (filterCat !== "all" && !categories.includes(filterCat)) setFilterCat("all");
   }, [categories, filterCat]);
 
   return (
@@ -294,7 +287,6 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       rawData, loading, processedData, totalStats, suppliers, categories,
       canal, setCanal, search, setSearch, filterForn, setFilterForn, filterCat, setFilterCat, 
       refreshData: refreshDatabase,
-      // @ts-ignore
       isRefreshing
     }}>
       {children}

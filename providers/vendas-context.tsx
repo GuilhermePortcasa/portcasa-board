@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useState, ReactNode, useCallback, useEffect, useRef } from "react";
+import { createContext, useContext, useState, ReactNode, useCallback, useEffect, useRef, useMemo } from "react";
 import { createClient } from "@/utils/supabase/client";
 import { subDays, startOfDay, format } from "date-fns";
 
@@ -15,26 +15,29 @@ interface VendasContextType {
 const VendasContext = createContext<VendasContextType>({} as VendasContextType);
 
 export function VendasProvider({ children }: { children: ReactNode }) {
-  const supabase = createClient();
+  // Memoiza o client do Supabase para ele não ser recriado a cada render
+  const supabase = useMemo(() => createClient(), []);
+  
   const [salesData, setSalesData] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [lastDaysLoaded, setLastDaysLoaded] = useState<number | null>(null);
   
-  // Usamos uma Ref para guardar o "último filtro" ativo para o Realtime saber o que buscar
+  // REFS: Mantêm os valores atualizados sem forçar a recriação das funções
   const daysRef = useRef<number | null>(null);
+  const lastDaysLoadedRef = useRef<number | null>(null);
+  const hasDataRef = useRef<boolean>(false);
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
 
-  // A função agora aceita o parâmetro "isSilent" para não mostrar a tela de loading enquanto atualiza
+  // Função ESTÁVEL (Não possui dependências mutáveis como arrays ou states)
   const fetchSales = useCallback(async (days: number | null, isSilent = false) => {
     
-    // Se não for silencioso e já tivermos esse período ou um maior cacheado, não faz nada
     if (!isSilent) {
-        const needsFetch = lastDaysLoaded === null || days === null || (days > lastDaysLoaded);
-        if (!needsFetch && salesData.length > 0) return;
-        setLoading(true);
+      const needsFetch = lastDaysLoadedRef.current === null || days === null || (days > lastDaysLoadedRef.current);
+      if (!needsFetch && hasDataRef.current) return; // Usa a Ref ao invés do salesData.length
+      setLoading(true);
     } else {
-        setIsRefreshing(true);
+      setIsRefreshing(true);
     }
 
     try {
@@ -48,19 +51,22 @@ export function VendasProvider({ children }: { children: ReactNode }) {
       const { data, error } = await query.order("data_venda", { ascending: false });
 
       if (error) throw error;
+      
       setSalesData(data || []);
+      hasDataRef.current = (data && data.length > 0) as boolean;
       
       setLastDaysLoaded(days);
-      daysRef.current = days; // Atualiza a referência para o realtime
+      lastDaysLoadedRef.current = days; 
+      daysRef.current = days; 
     } catch (err) {
       console.error("Erro ao carregar vendas:", err);
     } finally {
       setLoading(false);
       setIsRefreshing(false);
     }
-  }, [lastDaysLoaded, salesData.length, supabase]);
+  }, [supabase]); // <- Segredo aqui: Vazia de states, nunca é recriada.
 
-  // REALTIME ATIVADO: Ouve as três tabelas que afetam o faturamento
+  // REALTIME ATIVADO: Agora ele conecta UMA única vez e fica ouvindo silenciosamente
   useEffect(() => {
     const channel = supabase.channel('vendas-db-changes')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'pedidos_venda' }, handleDatabaseChange)
@@ -69,15 +75,11 @@ export function VendasProvider({ children }: { children: ReactNode }) {
       .subscribe();
 
     function handleDatabaseChange() {
-      // Se não houver dados carregados, não precisa atualizar nada
-      if (daysRef.current === null && salesData.length === 0) return;
-      
-      // Proteção contra múltiplas atualizações simultâneas
+      // Proteção contra múltiplas atualizações simultâneas do BD
       if (debounceRef.current) clearTimeout(debounceRef.current);
       
       debounceRef.current = setTimeout(() => {
         console.log("🔄 Alteração de faturamento detectada. Atualizando vendas em background...");
-        // Passa o filtro atual (daysRef) e o TRUE para ser silencioso (sem travar a tela)
         fetchSales(daysRef.current, true); 
       }, 3000);
     }
@@ -86,7 +88,7 @@ export function VendasProvider({ children }: { children: ReactNode }) {
       if (debounceRef.current) clearTimeout(debounceRef.current);
       supabase.removeChannel(channel);
     };
-  }, [fetchSales, salesData.length]);
+  }, [fetchSales, supabase]); // fetchSales agora é seguro e não derruba o canal
 
   return (
     <VendasContext.Provider value={{ salesData, loading, isRefreshing, fetchSales, lastDaysLoaded }}>
