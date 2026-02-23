@@ -1,0 +1,24 @@
+name: Reconciliação de Pedidos (Prevenção de Falhas)
+
+on:
+  schedule:
+    - cron: '30 23 * * *' # Roda todo dia às 20:30 (Horário de Brasília)
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - name: Install dependencies
+        run: pip install requests
+      - name: Run Reconciliacao
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: |
+          export PYTHONPATH=$PYTHONPATH:$(pwd)
+          python scripts/reconciliacao_pedidos.py

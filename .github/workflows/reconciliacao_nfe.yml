@@ -1,0 +1,45 @@
+name: Reconciliação de NFes (Vendas e Devoluções)
+
+on:
+  schedule:
+    # Roda todos os dias às 01:00 (Horário de Brasília) -> 04:00 UTC
+    - cron: '0 4 * * *'
+  
+  # Permite rodar manualmente pela aba Actions do GitHub
+  workflow_dispatch:
+
+jobs:
+  reconciliar:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout do repositório
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Instalar dependências
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests
+
+      - name: Executar Script de Reconciliação NFe
+        env:
+          # Variáveis para o Supabase
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          
+          # Caso o bling_service precise das chaves para gerar novo token via Refresh:
+          BLING_CLIENT_ID_PORTFIO: ${{ secrets.BLING_CLIENT_ID_PORTFIO }}
+          BLING_SECRET_PORTFIO: ${{ secrets.BLING_SECRET_PORTFIO }}
+          BLING_CLIENT_ID_PORTCASA: ${{ secrets.BLING_CLIENT_ID_PORTCASA }}
+          BLING_SECRET_PORTCASA: ${{ secrets.BLING_SECRET_PORTCASA }}
+          BLING_CLIENT_ID_CASA_MODELO: ${{ secrets.BLING_CLIENT_ID_CASA_MODELO }}
+          BLING_SECRET_CASA_MODELO: ${{ secrets.BLING_SECRET_CASA_MODELO }}
+        run: |
+          # Adiciona a raiz ao path para que o script encontre o bling_service.py
+          export PYTHONPATH=$PYTHONPATH:$(pwd)
+          python scripts/reconciliacao_nfe.py
