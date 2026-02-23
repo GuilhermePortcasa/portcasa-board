@@ -68,27 +68,31 @@ export default function RelatorioMatrizPage() {
       // EXCLUSÃO IMEDIATA: Pula kits estruturais e qualquer produto que NÃO TENHA TAG CADASTRADA
       if (item.tipo === 'E' || !item.tags_string || !item.tag_produto) return;
 
-      let est = 0, v30 = 0, v60 = 0, andamento = 0;
+      let est = 0, v30 = 0, v60 = 0, v90 = 0, andamento = 0;
       
       if (canalAtivo === "loja") {
         est = Number(item.est_loja || 0);
         v30 = Number(item.v_qtd_30d_loja || 0);
         v60 = Number(item.v_qtd_60d_loja || 0);
+       // v90 = Number(item.v_qtd_90d_loja || 0); // descomente para poder buscar v90
         andamento = Number(item.qtd_andamento_loja || 0);
       } else if (canalAtivo === "site") {
         est = Number(item.est_site || 0) + Number(item.est_full || 0);
         v30 = Number(item.v_qtd_30d_site || 0);
         v60 = Number(item.v_qtd_60d_site || 0);
+       // v90 = Number(item.v_qtd_90d_site || 0); // descomente para poder buscar v90
         andamento = Number(item.qtd_andamento_site || 0);
       } else {
         est = Number(item.est_total || 0);
         v30 = Number(item.v_qtd_30d_site || 0) + Number(item.v_qtd_30d_loja || 0);
         v60 = Number(item.v_qtd_60d_site || 0) + Number(item.v_qtd_60d_loja || 0);
+      //  v90 = Number(item.v_qtd_90d_site || 0) + Number(item.v_qtd_90d_loja || 0); // descomente para poder buscar v90
         andamento = Number(item.qtd_andamento || 0);
       }
 
       // EXCLUSÃO: Oculta inativos e zerados
       if (est === 0 && v60 === 0 && andamento === 0) return;
+      // troca para if (est === 0 && v90 === 0 && andamento === 0) return; se quiser ver v90
 
       // EXTRATORES (Direto das Tags do BD)
       const sku = item.sku;
