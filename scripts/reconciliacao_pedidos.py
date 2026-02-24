@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from bling_service import BlingService, SUPABASE_URL, SUPABASE_KEY
 
 # --- CONFIGURAÇÕES DE RECONCILIAÇÃO ---
-DIAS_BUSCA = 2 # Busca as últimas 48h para garantir que nada escape
+DIAS_BUSCA = 2 # Busca as alterações das últimas 48h
 ID_SIT_ATENDIDO = 9
 ID_SIT_FULL = 375989 # Situação específica do FULL no seu Bling
 
@@ -39,10 +39,11 @@ def salvar_pedidos_supabase(lote):
 
 def processar_reconciliacao():
     hoje = datetime.now()
-    data_inicio = (hoje - timedelta(days=DIAS_BUSCA)).strftime("%Y-%m-%d")
-    data_fim = hoje.strftime("%Y-%m-%d")
+    # Para data de alteração, o Bling exige data e hora: "YYYY-MM-DD HH:MM:SS"
+    data_inicio = (hoje - timedelta(days=DIAS_BUSCA)).strftime("%Y-%m-%d %H:%M:%S")
+    data_fim = hoje.strftime("%Y-%m-%d %H:%M:%S")
 
-    print(f"🔍 Iniciando Reconciliação de Pedidos: {data_inicio} até {data_fim}")
+    print(f"🔍 Iniciando Reconciliação de Pedidos (Por Alteração): {data_inicio} até {data_fim}")
 
     for config in CONFIG_RECONCILIACAO:
         nome_loja = config['loja']
@@ -51,8 +52,8 @@ def processar_reconciliacao():
         
         service = BlingService(nome_loja)
         params = {
-            "dataInicial": data_inicio,
-            "dataFinal": data_fim,
+            "dataAlteracaoInicial": data_inicio,
+            "dataAlteracaoFinal": data_fim,
             "idsSituacoes[]": config['situacao'],
             "limite": 100
         }
@@ -98,7 +99,10 @@ def processar_reconciliacao():
                             # No V3 o item['valor'] já vem com desconto de item. 
                             # O rateio é sobre o Desconto Global e Frete.
                             preco_unitario = float(item.get('valor', 0))
+                            
+                            # CORREÇÃO: Força quantidade para ser Integer limpo
                             qtd = int(float(item.get('quantidade', 0)))
+                            if qtd <= 0: continue
                             
                             valor_bruto_linha = preco_unitario * qtd
                             peso = valor_bruto_linha / total_venda_base
