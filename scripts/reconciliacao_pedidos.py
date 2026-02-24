@@ -74,6 +74,14 @@ def processar_reconciliacao():
                         if resp.status_code != 200: continue
                         v = resp.json().get('data')
                         if not v: continue
+                        
+                        if v.get('situacao', {}).get('id') != config['situacao']:
+                            print(f"   🗑️ Pedido {id_bling} mudou de status. Removendo do banco...")
+                            requests.delete(
+                                f"{SUPABASE_URL}/rest/v1/pedidos_venda?id=eq.{id_bling}",
+                                headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
+                            )
+                            continue
 
                         itens = v.get('itens', [])
                         if not itens: continue
