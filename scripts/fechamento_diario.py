@@ -1,5 +1,5 @@
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 from bling_service import SUPABASE_URL, SUPABASE_KEY
 
 def gerar_fechamento_diario():
