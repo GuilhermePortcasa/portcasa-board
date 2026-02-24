@@ -68,8 +68,15 @@ def processar_reconciliacao_nfe():
                     buffer_devolucoes = []
 
                     for nf_resumo in lote:
-                        # Filtro de situação inicial (Ignora canceladas no resumo)
-                        if nf_resumo['situacao'] in [2, 4]: continue
+                        id_nf = nf_resumo['id']
+
+                        # --- NOVO: LÓGICA DE EXCLUSÃO (NOTAS CANCELADAS) ---
+                        if nf_resumo['situacao'] in [2, 4]: 
+                            print(f"   🗑️ NF {id_nf} cancelada/rejeitada. Removendo do banco...")
+                            headers_del = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
+                            requests.delete(f"{SUPABASE_URL}/rest/v1/nfe_saida?id=eq.{id_nf}", headers=headers_del)
+                            requests.delete(f"{SUPABASE_URL}/rest/v1/devolucoes?id=eq.{id_nf}", headers=headers_del)
+                            continue
 
                         try:
                             time.sleep(0.35)
