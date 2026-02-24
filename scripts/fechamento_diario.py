@@ -3,7 +3,10 @@ from datetime import datetime
 from bling_service import SUPABASE_URL, SUPABASE_KEY
 
 def gerar_fechamento_diario():
-    hoje = datetime.now().strftime("%Y-%m-%d")
+    # Calcula a data de ONTEM
+    ontem_obj = datetime.now() - timedelta(days=1)
+    ontem_str = ontem_obj.strftime("%Y-%m-%d")
+    ontem_titulo = ontem_obj.strftime("%d/%m")
     
     headers = {
         "apikey": SUPABASE_KEY,
@@ -11,10 +14,10 @@ def gerar_fechamento_diario():
         "Content-Type": "application/json"
     }
     
-    print(f"📊 Gerando fechamento de {hoje}...")
+    print(f"📊 Gerando fechamento de {ontem_str}...")
     
     # Busca vendas de HOJE na view
-    url_vendas = f"{SUPABASE_URL}/rest/v1/view_vendas_detalhadas?data_venda=eq.{hoje}"
+    url_vendas = f"{SUPABASE_URL}/rest/v1/view_vendas_detalhadas?data_venda=eq.{ontem_str}"
     r = requests.get(url_vendas, headers=headers)
     
     if r.status_code != 200:
@@ -41,10 +44,10 @@ def gerar_fechamento_diario():
     # Monta a notificação
     notificacao = {
         "tipo": "fechamento_diario",
-        "titulo": f"Fechamento do Dia: {datetime.now().strftime('%d/%m')}",
+        "titulo": f"Fechamento do Dia: {ontem_titulo}",
         "mensagem": f"Faturamento Total: R$ {tot_geral:,.2f} | Loja: R$ {tot_loja:,.2f} | Site: R$ {tot_site:,.2f}",
         "detalhes": {
-            "data": hoje,
+            "data": ontem_str,
             "total_geral": tot_geral,
             "loja": {"receita": tot_loja, "pedidos": qtd_loja},
             "site": {"receita": tot_site, "pedidos": qtd_site}
