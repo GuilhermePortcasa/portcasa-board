@@ -1,11 +1,9 @@
 name: Fechamento Diário de Vendas
 
 on:
-  # Executa automaticamente todos os dias às 23:55 (Horário de Brasília) -> 02:55 UTC
   schedule:
-    - cron: '0 0 * * *'
+    - cron: '55 23 * * *'
   
-  # Permite que você rode o script manualmente no GitHub quando quiser testar
   workflow_dispatch:
 
 jobs:
