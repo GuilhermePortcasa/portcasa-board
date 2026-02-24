@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from bling_service import BlingService, SUPABASE_URL, SUPABASE_KEY
 
 # --- CONFIGURAÇÕES DE RECONCILIAÇÃO ---
-DIAS_BUSCA = 8 # Busca as últimas 48h para garantir que nada escape
+DIAS_BUSCA = 2 # Busca as últimas 48h para garantir que nada escape
 ID_SIT_ATENDIDO = 9
 ID_SIT_FULL = 375989 # Situação específica do FULL no seu Bling
 
