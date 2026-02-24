@@ -98,7 +98,7 @@ def processar_reconciliacao():
                             # No V3 o item['valor'] já vem com desconto de item. 
                             # O rateio é sobre o Desconto Global e Frete.
                             preco_unitario = float(item.get('valor', 0))
-                            qtd = float(item.get('quantidade', 0))
+                            qtd = int(float(item.get('quantidade', 0)))
                             
                             valor_bruto_linha = preco_unitario * qtd
                             peso = valor_bruto_linha / total_venda_base
