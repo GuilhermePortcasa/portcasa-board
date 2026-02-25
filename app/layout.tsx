@@ -14,7 +14,7 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en">
-      <body className={`${geistSans.variable} ${geistMono.variable} antialiased bg-slate-50 overflow-hidden`}>
+      <body className={`${geistSans.variable} ${geistMono.variable} antialiased bg-slate-50 h-[100dvh] overflow-hidden`}>
         {/* Passamos o controle de renderização para o AppLayout */}
         <AppLayout>
           {children}
