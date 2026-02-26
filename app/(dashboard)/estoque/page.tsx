@@ -179,18 +179,19 @@ export default function EstoquePage() {
         return (
           <div 
             className={cn(
-              "flex flex-col",
+              "flex flex-col max-w-[280px]", // Largura máxima reduzida
               isParent ? "font-black text-[13px] text-slate-900" : "pl-6 text-xs text-slate-600",
               hasVariations && "cursor-pointer hover:text-blue-700 transition-colors"
             )}
             onClick={() => hasVariations && row.toggleExpanded()}
           >
-            <div className="flex items-center gap-2">
-              <span className="truncate max-w-[400px]">{displayName}</span>
-              {/* Oculta a badge de SKU se for Pai para deixar mais limpo */}
-              {!isParent && <Badge variant="outline" className="text-[9px] h-4 font-mono bg-white">{row.original.sku}</Badge>}
+            {/* items-start faz o texto e a badge alinharem pelo topo */}
+            <div className="flex items-start gap-2">
+              {/* whitespace-normal permite quebrar a linha, leading-tight melhora o espaçamento das linhas */}
+              <span className="whitespace-normal leading-tight text-balance">{displayName}</span>
+              {!isParent && <Badge variant="outline" className="text-[9px] h-4 font-mono bg-white shrink-0 mt-0.5">{row.original.sku}</Badge>}
             </div>
-            {isParent && <div className="text-[9px] text-slate-400 flex items-center gap-1 mt-0.5 uppercase tracking-tight font-medium"><Factory size={10}/> {row.original.fornecedor}</div>}
+            {isParent && <div className="text-[9px] text-slate-400 flex items-center gap-1 mt-1 uppercase tracking-tight font-medium"><Factory size={10}/> {row.original.fornecedor}</div>}
           </div>
         );
       }
@@ -224,35 +225,39 @@ export default function EstoquePage() {
       id: "pedidos", 
       accessorFn: row => row.isParent ? row.qtd_ped : row.qtd_ped_atual,
       header: ({ column }) => (
-        <Button variant="ghost" size="sm" className="-ml-3 h-8 text-[10px] uppercase font-bold" onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}>
-          A Chegar <ArrowUpDown className="ml-2 h-3 w-3" />
+        // Reduzimos margens e forçamos um tamanho menor
+        <Button variant="ghost" size="sm" className="-ml-3 h-8 text-[10px] uppercase font-bold px-2" onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}>
+          A Chegar <ArrowUpDown className="ml-1 h-3 w-3 shrink-0" />
         </Button>
       ),
       cell: ({ row }) => {
         const qtd = row.original.isParent ? row.original.qtd_ped : row.original.qtd_ped_atual;
         if (!qtd || qtd <= 0) return <span className="text-slate-300">-</span>;
+        
         if (!row.original.isParent) {
            const dataPrev = row.original.data_chegada_prevista;
            const fmtChegada = dataPrev ? new Date(dataPrev).toLocaleDateString('pt-BR', {day:'2-digit', month:'2-digit'}) : null;
            return (
-             <div className="flex flex-col">
-               <div className="text-blue-600 font-bold flex items-center gap-1"><Truck size={10} /> {fNum(qtd)}</div>
+             <div className="flex flex-col w-[70px]"> {/* Força largura estreita */}
+               <div className="text-blue-600 font-bold flex items-center gap-1"><Truck size={10} className="shrink-0" /> {fNum(qtd)}</div>
                {fmtChegada && <span className="text-[9px] text-slate-400 font-medium leading-tight mt-0.5">Chega: {fmtChegada}</span>}
              </div>
            );
         }
+        
         const modalItems = row.original.children.filter((c: any) => c.qtd_ped_atual > 0);
         return (
           <Dialog>
             <DialogTrigger asChild>
-              <Button variant="ghost" size="sm" className="h-6 px-2 text-blue-600 font-bold hover:bg-blue-50"><Truck size={12} className="mr-1"/> {fNum(qtd)}</Button>
+              {/* Botão mais estreito */}
+              <Button variant="ghost" size="sm" className="h-6 px-1.5 text-blue-600 font-bold hover:bg-blue-50 justify-start w-[70px]">
+                <Truck size={12} className="mr-1 shrink-0"/> {fNum(qtd)}
+              </Button>
             </DialogTrigger>
             <DialogContent className="max-w-xl">
               <DialogHeader>
                 <DialogTitle className="flex justify-between items-center pr-6">
                   <span>Pedidos em Andamento ({canal.toUpperCase()})</span>
-                  
-                  {/* NOVO BOTÃO DE COMUNICAÇÃO AQUI */}
                   <Link 
                     href={`/compras?busca=${encodeURIComponent(row.original.nome_pai || row.original.nome)}&canal=${canal}`} 
                     target="_blank"
@@ -261,7 +266,6 @@ export default function EstoquePage() {
                       Ver na Tela de Pedidos <ExternalLink size={14} />
                     </Button>
                   </Link>
-                  
                 </DialogTitle>
               </DialogHeader>
               <Table>
