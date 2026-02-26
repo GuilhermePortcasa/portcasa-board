@@ -41,17 +41,22 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
   const isFirstLoadRef = useRef(true);
 
-  // 1. FETCH SIMPLIFICADO (Carga Única) - Agora usando useCallback puro sem dependências mutáveis
+  // 1. FETCH SIMPLIFICADO (Carga Única Otimizada)
   const fetchAll = useCallback(async (isSilent = false) => {
     if (!isSilent) setLoading(true); 
     else setIsRefreshing(true);
     
     try {
       console.time("Tempo de Carga da View");
+      
+      // OTIMIZAÇÃO: Diminuímos o limite absurdo para o tamanho real do seu catálogo.
+      // Isso evita o erro de "timeout" e alocação desnecessária de RAM no servidor Supabase.
+      // E usamos um filtro "is not null" no SKU apenas para forçar o banco a usar o Index.
       const { data, error } = await supabase
         .from("view_dashboard_completa")
         .select("*")
-        .limit(100000); 
+        .not("sku", "is", null) 
+        .limit(15000); 
         
       if (error) throw error;
       
