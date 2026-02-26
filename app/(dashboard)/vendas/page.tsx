@@ -1,8 +1,7 @@
 "use client";
 
-import React, { useEffect, useState, useMemo, Suspense } from "react";
+import React, { useEffect, useState, useMemo, useRef, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
-import { createClient } from "@/utils/supabase/client";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Calendar as CalendarIcon, DollarSign, TrendingUp, SearchX, ShoppingCart, Percent, Store, Globe, PackageOpen, ChevronRight, ChevronDown, Search, ArrowUpDown } from "lucide-react";
@@ -11,7 +10,7 @@ import { cn } from "@/lib/utils";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { Input } from "@/components/ui/input";
 
-import { format, subDays, isWithinInterval, startOfDay } from "date-fns";
+import { format, subDays } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { DateRange } from "react-day-picker";
 import { Calendar } from "@/components/ui/calendar";
@@ -26,10 +25,9 @@ const fNum = (v: number) => new Intl.NumberFormat("pt-BR").format(v || 0);
 const fPercent = (v: number) => new Intl.NumberFormat("pt-BR", { style: "percent", minimumFractionDigits: 1 }).format(v || 0);
 
 function VendasContent() {
-  const { salesData, loading, fetchSales, lastDaysLoaded } = useVendas();
+  const { salesData, loading, fetchSales } = useVendas();
   const searchParams = useSearchParams();
 
-  // Estados de Filtro
   const initialSearch = searchParams.get("busca") || "";
   const initialCanal = (searchParams.get("canal") as "geral" | "loja" | "site") || "geral";
 
@@ -38,38 +36,79 @@ function VendasContent() {
   const [searchTerm, setSearchTerm] = useState(initialSearch);
   const [sortConfig, setSortConfig] = useState<{ key: string, direction: 'asc' | 'desc' }>({ key: 'lucro', direction: 'desc' });
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
-// NOVO: Estado do Filtro de Fornecedor
   const [filterForn, setFilterForn] = useState("all");
 
   const [activePreset, setActivePreset] = useState<string>(initialSearch ? "tudo" : "30d");
+  
+// Estados de Data
   const [date, setDate] = useState<DateRange | undefined>(
     initialSearch ? undefined : { from: subDays(new Date(), 30), to: new Date() }
   );
+  
+  // NOVO: Estados para controlar o Calendário e a seleção temporária
+  const [isCalendarOpen, setIsCalendarOpen] = useState(false);
+  const [tempDate, setTempDate] = useState<DateRange | undefined>(date);
 
-  // NOVO: Extrai fornecedores únicos para o Select
-  const suppliers = useMemo(() => {
-    if (!salesData) return [];
-    // Filtra undefined/null, limpa espaços extras e remove duplicados usando Set
-    const list = salesData
-      .map(v => v.fornecedor ? v.fornecedor.trim() : null)
-      .filter(Boolean);
-    return Array.from(new Set(list)).sort();
-  }, [salesData]);
-
-  // Controle de Carga Inicial Segura
+  // Sincroniza a data temporária quando abre o popover
   useEffect(() => {
-    // Só manda buscar se ainda não tiver buscado (evita loops infinitos)
-    if (lastDaysLoaded === null && !loading) {
-      fetchSales(30);
+    if (isCalendarOpen) setTempDate(date);
+  }, [isCalendarOpen, date]);
+
+  const hasLoadedInitial = useRef(false);
+
+  useEffect(() => {
+    if (!hasLoadedInitial.current) {
+        hasLoadedInitial.current = true;
+        const fromStr = date?.from ? format(date.from, "yyyy-MM-dd") : null;
+        const toStr = date?.to ? format(date.to, "yyyy-MM-dd") : null;
+        fetchSales(fromStr, toStr);
     }
-  }, [fetchSales, lastDaysLoaded, loading]);
+  }, [date, fetchSales]);
 
   const handlePreset = (days: number | null, presetName: string) => {
     setActivePreset(presetName);
-    fetchSales(days);
-    if (days === null) setDate(undefined);
-    else setDate({ from: subDays(new Date(), days), to: new Date() });
+    if (days === null) {
+        setDate(undefined);
+        fetchSales(null, null); 
+    } else {
+        const from = subDays(new Date(), days);
+        const to = new Date();
+        setDate({ from, to });
+        fetchSales(format(from, "yyyy-MM-dd"), format(to, "yyyy-MM-dd"));
+    }
   };
+
+  // NOVO: Função que aplica a data apenas quando clica no botão "Aplicar" ou em um atalho
+  const applyDateFilter = (rangeToApply: DateRange | undefined) => {
+    setDate(rangeToApply);
+    setActivePreset("custom");
+    setIsCalendarOpen(false); // Fecha o calendário
+    
+    if (rangeToApply?.from) {
+        const fromStr = format(rangeToApply.from, "yyyy-MM-dd");
+        const toStr = rangeToApply.to ? format(rangeToApply.to, "yyyy-MM-dd") : fromStr;
+        fetchSales(fromStr, toStr);
+    } else {
+        fetchSales(null, null);
+    }
+  };
+
+  // NOVO: Atalhos rápidos do calendário
+  const selectToday = () => {
+    const today = new Date();
+    applyDateFilter({ from: today, to: today });
+  };
+
+  const selectYesterday = () => {
+    const yesterday = subDays(new Date(), 1);
+    applyDateFilter({ from: yesterday, to: yesterday });
+  };
+
+  const suppliers = useMemo(() => {
+    if (!salesData) return [];
+    const list = salesData.map(v => v.fornecedor ? v.fornecedor.trim() : null).filter(Boolean);
+    return Array.from(new Set(list)).sort();
+  }, [salesData]);
 
   const toggleRow = (pai: string) => {
     const newSet = new Set(expandedRows);
@@ -84,14 +123,12 @@ function VendasContent() {
     setSortConfig({ key, direction });
   };
 
-// Filtragem dos dados (Garantindo que salesData é sempre array)
+  // Filtragem MANTIDA apenas para Canais e Busca de Texto. 
+  // O Filtro de Data FOI REMOVIDO DAQUI pois o Supabase já traz os dados filtrados.
   const filteredData = useMemo(() => {
     let list = Array.isArray(salesData) ? [...salesData] : []; 
 
-    // NOVO: Filtro de Fornecedor
-    if (filterForn !== "all") {
-      list = list.filter(v => v.fornecedor === filterForn);
-    }
+    if (filterForn !== "all") list = list.filter(v => v.fornecedor === filterForn);
 
     if (canalAtivo === "loja") list = list.filter(v => v.canal_macro === "LOJA");
     else if (canalAtivo === "site") {
@@ -99,21 +136,6 @@ function VendasContent() {
       if (subCanalSite === "padrao") list = list.filter(v => v.canal_detalhado === "SITE_PADRAO" || v.canal_detalhado === "PORTFIO");
       else if (subCanalSite === "full") list = list.filter(v => v.canal_detalhado === "FULL");
       else if (subCanalSite === "casamodelo") list = list.filter(v => v.canal_detalhado === "CASA_MODELO");
-    }
-
-    // CORREÇÃO: Filtragem Segura de Datas, ignorando problemas de fuso horário
-    if (date?.from) {
-      // Pega os dias no formato AAAA-MM-DD para comparar como string (infalível contra fuso)
-      const dataInicioStr = format(date.from, "yyyy-MM-dd");
-      const dataFimStr = date.to ? format(date.to, "yyyy-MM-dd") : dataInicioStr;
-
-      list = list.filter(item => {
-        if (!item.data_venda) return false;
-        // Pega apenas a parte da data "YYYY-MM-DD" do banco (ignora horas se houver)
-        const vendaDateStr = item.data_venda.substring(0, 10);
-        
-        return vendaDateStr >= dataInicioStr && vendaDateStr <= dataFimStr;
-      });
     }
 
     if (searchTerm) {
@@ -124,10 +146,9 @@ function VendasContent() {
         (v.sku && v.sku.toLowerCase().includes(lowerSearch))
       );
     }
-    
     return list;
-  }, [salesData, date, canalAtivo, subCanalSite, searchTerm, filterForn]);
-  
+  }, [salesData, canalAtivo, subCanalSite, searchTerm, filterForn]);
+
   // Processamento e Agrupamento
   const { kpis, chartData, topProducts, siteBreakdown } = useMemo(() => {
     let receita = 0, cmv = 0, lucro = 0, qtd = 0;
@@ -197,7 +218,6 @@ function VendasContent() {
       .map((d: any) => ({ ...d, data_fmt: format(new Date(d.data + 'T00:00:00'), "dd/MM") }));
 
     let top = Object.values(parentMap);
-    // ... (sua lógica de sort do topProducts permanece igual)
     top.sort((a: any, b: any) => {
       let valA = a[sortConfig.key];
       let valB = b[sortConfig.key];
@@ -246,7 +266,7 @@ function VendasContent() {
   const totalPages = Math.ceil(topProducts.length / itemsPerPage);
   const paginatedProducts = topProducts.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
-  if (loading) return <div className="p-10 text-center text-slate-500 italic animate-pulse">Consolidando análise e buscando vendas...</div>;
+  if (loading) return <div className="p-10 text-center text-slate-500 italic animate-pulse">Buscando vendas no banco de dados...</div>;
 
   return (
     <div className="space-y-3 pb-10">
@@ -265,7 +285,7 @@ function VendasContent() {
               <Input placeholder="Buscar produto..." className="pl-9 h-8 text-xs" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
             </div>
 
-            {/* NOVO: SELECT DE FORNECEDOR */}
+            {/* SELECT DE FORNECEDOR */}
             <div className="relative w-full sm:w-[180px]">
               <select
                 value={filterForn}
@@ -301,15 +321,38 @@ function VendasContent() {
               <Button variant={activePreset === "90d" ? "default" : "ghost"} size="sm" className="text-[10px] h-6 px-2" onClick={() => handlePreset(90, "90d")}>90D</Button>
               <Button variant={activePreset === "tudo" ? "default" : "ghost"} size="sm" className="text-[10px] h-6 px-2" onClick={() => handlePreset(null, "tudo")}>Tudo</Button>
             </div>
-            <Popover>
+            <Popover open={isCalendarOpen} onOpenChange={setIsCalendarOpen}>
               <PopoverTrigger asChild>
                 <Button variant="outline" className={cn("w-full sm:w-[200px] justify-start text-left font-normal border-slate-200 shadow-sm h-8 text-xs", activePreset === "custom" && "border-blue-500 ring-1 ring-blue-500")}>
                   <CalendarIcon className="mr-2 h-3 w-3 text-blue-600" />
                   {date?.from ? (date.to ? `${format(date.from, "dd/MM/yy")} a ${format(date.to, "dd/MM/yy")}` : format(date.from, "dd/MM/yy")) : "Personalizado"}
                 </Button>
               </PopoverTrigger>
-              <PopoverContent className="w-auto p-0" align="end">
-                <Calendar initialFocus mode="range" defaultMonth={date?.from} selected={date} onSelect={(d) => { setDate(d); setActivePreset("custom"); }} numberOfMonths={2} locale={ptBR} />
+              <PopoverContent className="w-auto p-0 shadow-2xl rounded-xl border-slate-200 overflow-hidden" align="end">
+                <Calendar 
+                  initialFocus 
+                  mode="range" 
+                  defaultMonth={tempDate?.from || date?.from} 
+                  selected={tempDate} 
+                  onSelect={setTempDate} // Atualiza só o tempDate, não busca ainda!
+                  numberOfMonths={2} 
+                  locale={ptBR} 
+                />
+                
+                {/* NOVO: Rodapé do Calendário */}
+                <div className="p-3 border-t border-slate-100 flex items-center justify-between bg-slate-50 gap-4">
+                  <div className="flex gap-2">
+                    <Button variant="outline" size="sm" className="h-7 text-[10px] bg-white" onClick={selectToday}>Hoje</Button>
+                    <Button variant="outline" size="sm" className="h-7 text-[10px] bg-white" onClick={selectYesterday}>Ontem</Button>
+                  </div>
+                  <Button 
+                    size="sm" 
+                    className="h-7 text-[10px] bg-blue-600 hover:bg-blue-700 px-4" 
+                    onClick={() => applyDateFilter(tempDate)}
+                  >
+                    Aplicar
+                  </Button>
+                </div>
               </PopoverContent>
             </Popover>
           </div>
@@ -334,7 +377,6 @@ function VendasContent() {
                     <div className="text-xl font-black text-slate-800 flex items-center justify-between">
                       {fCurrency(kpis.receita)} <DollarSign className="text-blue-100" size={20} />
                     </div>
-                    {/* TICKET MÉDIO NO CARD PRINCIPAL */}
                     <div className="text-[11px] text-blue-600 font-bold mt-1">
                       {fCurrency(kpis.receita / (kpis.vendasCount || 1))} 
                       <span className="text-slate-400 font-normal uppercase text-[9px] ml-1">Ticket Médio</span>

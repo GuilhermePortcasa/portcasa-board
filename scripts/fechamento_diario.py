@@ -54,11 +54,11 @@ def gerar_fechamento_diario():
         }
     }
     
+    # DELETA A NOTIFICAÇÃO DO DIA ANTERIOR PARA NÃO POLUIR O SINO
+    requests.delete(f"{SUPABASE_URL}/rest/v1/notificacoes?tipo=eq.fechamento_diario", headers=headers)
+    
     # Insere no Supabase
     requests.post(f"{SUPABASE_URL}/rest/v1/notificacoes", headers=headers, json=notificacao)
-    
-    # Limpa as antigas (Chama a função criada no Passo 1)
-    requests.post(f"{SUPABASE_URL}/rest/v1/rpc/limpar_notificacoes_antigas", headers=headers)
     print("✅ Fechamento enviado e notificações velhas limpas.")
 
 if __name__ == "__main__":

@@ -63,8 +63,8 @@ def processar_loja(loja_nome):
     print(f"\n🚀 Sincronizando {loja_nome}...")
     service = BlingService(loja_nome)
     
-    ids_processados_agora = set()
-    params = {"limite": 100} 
+    itens_processados_agora = set() # ADICIONADO: Agora rastreia a dupla (id_pedido, sku)
+    params = {"limite": 100}
     
     try:
         for lote in service.get_all_pages("/pedidos/compras", params=params):
@@ -98,8 +98,6 @@ def processar_loja(loja_nome):
                         print(f"   🚫 Ignorando {nome_forn} (Blacklist)")
                         continue
 
-                    ids_processados_agora.add(id_pedido)
-
                     val_frete_nota = p.get('transporte', {}).get('frete', 0) or 0
                     val_ipi_nota = p.get('tributacao', {}).get('totalIPI', 0) or 0
                     
@@ -122,6 +120,9 @@ def processar_loja(loja_nome):
                         v_unit = float(item.get('valor', 0) or 0)
                         
                         if qtd <= 0: continue
+
+                        # ADICIONADO: Salva o ID do Pedido + SKU para comparar com o banco depois
+                        itens_processados_agora.add((id_pedido, sku))
 
                         peso = (v_unit * qtd) / soma_bruta_nota
                         
@@ -170,28 +171,37 @@ def processar_loja(loja_nome):
             if itens_consolidados:
                 operacao_banco("POST", "compras_pedidos", dados=list(itens_consolidados.values()))
 
-        # 2. LIMPEZA (GARBAGE COLLECTION) COM OS PRINTS ORIGINAIS
-        if ids_processados_agora:
-            print("🧹 Iniciando limpeza de pedidos obsoletos...")
+        # 2. LIMPEZA INTELIGENTE (GARBAGE COLLECTION POR ITEM E PEDIDO)
+        if itens_processados_agora:
+            print("🧹 Iniciando verificação de exclusões e cancelamentos...")
             try:
+                # Busca TODOS os itens (id_pedido + sku) que estão atualmente no Supabase para esta loja
                 r_banco = requests.get(
-                    f"{SUPABASE_URL}/rest/v1/compras_pedidos?select=id_pedido&loja=eq.{loja_nome}", 
+                    f"{SUPABASE_URL}/rest/v1/compras_pedidos?select=id_pedido,sku&loja=eq.{loja_nome}", 
                     headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
                 )
+                
                 if r_banco.status_code == 200:
-                    ids_banco = set([row['id_pedido'] for row in r_banco.json()])
-                    ids_para_remover = ids_banco - ids_processados_agora
+                    itens_banco = set([(row['id_pedido'], row['sku']) for row in r_banco.json()])
                     
-                    if ids_para_remover:
-                        print(f"   🗑️ Removendo {len(ids_para_remover)} pedidos antigos/cancelados...")
-                        lista_remocao = list(ids_para_remover)
-                        batch_size = 50
-                        for i in range(0, len(lista_remocao), batch_size):
-                            lote_ids = lista_remocao[i:i+batch_size]
-                            ids_str = ",".join(map(str, lote_ids))
-                            operacao_banco("DELETE", "compras_pedidos", params=f"id_pedido=in.({ids_str})")
+                    # A mágica: Encontra o que está no Banco mas NÃO veio do Bling agora
+                    itens_para_remover = itens_banco - itens_processados_agora
+                    
+                    if itens_para_remover:
+                        print(f"   🗑️ Removendo {len(itens_para_remover)} itens obsoletos (excluídos do pedido ou cancelados)...")
+                        
+                        # Agrupa as exclusões por id_pedido para otimizar a velocidade da API
+                        remocoes_por_pedido = {}
+                        for id_p, sku in itens_para_remover:
+                            remocoes_por_pedido.setdefault(id_p, []).append(sku)
+                            
+                        for id_p, skus in remocoes_por_pedido.items():
+                            # Formata para a sintaxe IN do Supabase: in.("SKU1","SKU2")
+                            skus_formatados = ",".join([f'"{s}"' for s in skus])
+                            params = f"id_pedido=eq.{id_p}&sku=in.({skus_formatados})"
+                            operacao_banco("DELETE", "compras_pedidos", params=params)
                     else:
-                        print("   ✨ Nenhum pedido para remover.")
+                        print("   ✨ Sincronização perfeita. Nenhum item obsoleto.")
             except Exception as e_limp:
                 print(f"   ⚠️ Erro na limpeza: {e_limp}")
 

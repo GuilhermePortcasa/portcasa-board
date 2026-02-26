@@ -173,13 +173,24 @@ export default function EstoquePage() {
           ? name.replace(parentName, "").replace(/^[:\s-]+/, "").trim() || name
           : name;
 
+        const isParent = row.original.isParent;
+        const hasVariations = isParent && row.original.hasVariations;
+
         return (
-          <div className={row.original.isParent ? "font-bold text-slate-800" : "pl-6 text-xs text-slate-600"}>
+          <div 
+            className={cn(
+              "flex flex-col",
+              isParent ? "font-black text-[13px] text-slate-900" : "pl-6 text-xs text-slate-600",
+              hasVariations && "cursor-pointer hover:text-blue-700 transition-colors"
+            )}
+            onClick={() => hasVariations && row.toggleExpanded()}
+          >
             <div className="flex items-center gap-2">
               <span className="truncate max-w-[400px]">{displayName}</span>
-              <Badge variant="outline" className="text-[9px] h-4 font-mono">{row.original.sku}</Badge>
+              {/* Oculta a badge de SKU se for Pai para deixar mais limpo */}
+              {!isParent && <Badge variant="outline" className="text-[9px] h-4 font-mono bg-white">{row.original.sku}</Badge>}
             </div>
-            {row.original.isParent && <div className="text-[10px] text-muted-foreground flex items-center gap-1 mt-0.5"><Factory size={10}/> {row.original.fornecedor}</div>}
+            {isParent && <div className="text-[9px] text-slate-400 flex items-center gap-1 mt-0.5 uppercase tracking-tight font-medium"><Factory size={10}/> {row.original.fornecedor}</div>}
           </div>
         );
       }
@@ -302,27 +313,56 @@ export default function EstoquePage() {
         );
       }
     },
-{ 
+    { 
       header: "Custo Méd", 
       cell: ({ row }) => {
-        const custo = row.original.isParent ? (row.original.sum_unit_cost / row.original.count) : row.original.custo_final;
+        let custo = 0;
+        
+        if (row.original.isParent) {
+          // NOVO CÁLCULO PONDERADO PELO ESTOQUE
+          const children = row.original.children || [];
+          let totalEstoqueValue = 0;
+          let totalEstoqueQtd = 0;
+          
+          children.forEach((c: any) => {
+            const qtd = canal === 'loja' ? c.est_loja : canal === 'site' ? (c.est_site + c.est_full) : c.est_total;
+            if (qtd > 0) {
+              totalEstoqueValue += (qtd * c.custo_final);
+              totalEstoqueQtd += qtd;
+            }
+          });
+          
+          // Se não tem estoque, faz a média simples dos custos fixos. Se tem, faz ponderada.
+          custo = totalEstoqueQtd > 0 ? (totalEstoqueValue / totalEstoqueQtd) : (row.original.sum_unit_cost / (row.original.count || 1));
+        } else {
+          custo = row.original.custo_final;
+        }
+
+        const isParent = row.original.isParent;
+
         return (
           <Popover>
-            <PopoverTrigger className="cursor-help hover:text-blue-600 underline decoration-dotted decoration-slate-300 underline-offset-2">
+            <PopoverTrigger className={cn(
+              "cursor-help hover:text-blue-600 underline decoration-dotted decoration-slate-300 underline-offset-2",
+              isParent ? "font-black text-slate-800 bg-slate-200/50 px-1.5 py-0.5 rounded" : ""
+            )}>
               {fCurrency(custo)}
             </PopoverTrigger>
             <PopoverContent className="w-64 text-xs">
-              <div className="font-bold mb-2 border-b pb-1">Composição do Custo</div>
+              <div className="font-bold mb-2 border-b pb-1">{isParent ? 'Custo Médio Ponderado (Estoque)' : 'Composição do Custo'}</div>
               <div className="flex justify-between py-1">
-                <span>Custo Calculado:</span> <b>{fCurrency(custo)}</b>
+                <span>Custo Calculado:</span> <b className="text-blue-600">{fCurrency(custo)}</b>
               </div>
-              <div className="flex justify-between py-1 text-slate-500">
-                <span>Última Entrada:</span> <span>{fCurrency(row.original.custo_ult_ent)}</span>
-              </div>
-              {/* NOVA LINHA AQUI: Custo Fixo (que vem do custo_padrao da View) */}
-              <div className="flex justify-between py-1 text-slate-500">
-                <span>Custo Fixo (Padrão):</span> <span>{fCurrency(row.original.custo_padrao)}</span>
-              </div>
+              {!isParent && (
+                <>
+                  <div className="flex justify-between py-1 text-slate-500">
+                    <span>Última Entrada:</span> <span>{fCurrency(row.original.custo_ult_ent)}</span>
+                  </div>
+                  <div className="flex justify-between py-1 text-slate-500">
+                    <span>Custo Fixo (Padrão):</span> <span>{fCurrency(row.original.custo_padrao)}</span>
+                  </div>
+                </>
+              )}
             </PopoverContent>
           </Popover>
         );
@@ -332,26 +372,41 @@ export default function EstoquePage() {
       header: "Preço Venda",
       cell: ({ row }) => {
         const p = row.original.isParent ? (row.original.sum_preco / row.original.count) : (canal === 'site' ? (row.original.ultimo_preco_site || row.original.preco_venda_padrao) : row.original.preco_venda_padrao);
-        return <span className="text-xs font-bold text-slate-700">{fCurrency(p)}</span>;
+        return <span className={cn("text-xs", row.original.isParent ? "font-black text-slate-800" : "font-bold text-slate-600")}>{fCurrency(p)}</span>;
       }
     },
     {
       id: "markup",
-      accessorFn: row => {
-        const c = row.isParent ? (row.sum_unit_cost / (row.count || 1)) : (row.custo_final || 0);
-        const p = row.isParent ? (row.sum_preco / (row.count || 1)) : (canal === 'site' ? (row.ultimo_preco_site || row.preco_venda_padrao) : row.preco_venda_padrao);
-        return c > 0 ? ((p - c) / c) * 100 : -9999;
-      },
       header: ({ column }) => (
         <Button variant="ghost" size="sm" className="-ml-3 h-8 text-[10px] uppercase font-bold" onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}>
           Markup <ArrowUpDown className="ml-2 h-3 w-3" />
         </Button>
       ),
       cell: ({ row }) => {
-        const c = row.original.isParent ? (row.original.sum_unit_cost / (row.original.count || 1)) : row.original.custo_final;
-        const p = row.original.isParent ? (row.original.sum_preco / (row.original.count || 1)) : (canal === 'site' ? (row.original.ultimo_preco_site || row.original.preco_venda_padrao) : row.original.preco_venda_padrao);
+        const isParent = row.original.isParent;
+        let c = 0;
+
+        // Repetimos o cálculo ponderado aqui para o Markup ser perfeito
+        if (isParent) {
+          const children = row.original.children || [];
+          let totalEstoqueValue = 0;
+          let totalEstoqueQtd = 0;
+          children.forEach((child: any) => {
+            const qtd = canal === 'loja' ? child.est_loja : canal === 'site' ? (child.est_site + child.est_full) : child.est_total;
+            if (qtd > 0) {
+              totalEstoqueValue += (qtd * child.custo_final);
+              totalEstoqueQtd += qtd;
+            }
+          });
+          c = totalEstoqueQtd > 0 ? (totalEstoqueValue / totalEstoqueQtd) : (row.original.sum_unit_cost / (row.original.count || 1));
+        } else {
+          c = row.original.custo_final;
+        }
+
+        const p = isParent ? (row.original.sum_preco / (row.original.count || 1)) : (canal === 'site' ? (row.original.ultimo_preco_site || row.original.preco_venda_padrao) : row.original.preco_venda_padrao);
         const mkp = c > 0 ? ((p - c) / c) * 100 : 0;
-        return <Badge variant={mkp < 40 ? "destructive" : "outline"} className="text-[9px] h-4">{fPerc(mkp)}</Badge>;
+        
+        return <Badge variant={mkp < 40 ? "destructive" : "outline"} className={cn("text-[9px] h-4", isParent && mkp >= 40 && "bg-slate-200 border-none font-black")}>{fPerc(mkp)}</Badge>;
       }
     }
   ];
