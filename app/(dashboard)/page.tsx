@@ -26,25 +26,46 @@ export default function VisaoGeralPage() {
   const supabase = createClient();
   const { rawData, totalStats, loading, filterForn, filterCat } = useDashboard();
   
-  const [comprasStats, setComprasStats] = useState({ qtdPedidos: 0, valorTotal: 0 });
+  const [comprasStats, setComprasStats] = useState({ qtdPedidos: 0, valorTotal: 0, loja: 0, site: 0 });
   // Novo estado para contagem de pedidos únicos (Vendas)
   const [vendasUnicas, setVendasUnicas] = useState({ total: 0, loja: 0, site: 0 });
 
   useEffect(() => {
     async function fetchData() {
-      // 1. Busca Compras em andamento (Inalterado)
+      // 1. Busca Compras em andamento e separa por canal
       const { data: pedidosRaw } = await supabase
         .from("view_pedidos_detalhados")
-        .select("id_pedido, quantidade, custo_efetivo_pedido");
+        .select("id_pedido, quantidade, custo_efetivo_pedido, loja"); // Adicionado a coluna "loja"
 
       if (pedidosRaw) {
-        const groups: Record<string, number> = {};
+        const groups: Record<string, any> = {};
+        
         pedidosRaw.forEach(item => {
-          groups[item.id_pedido] = (groups[item.id_pedido] || 0) + (Number(item.quantidade) * Number(item.custo_efetivo_pedido));
+          if (!groups[item.id_pedido]) {
+            groups[item.id_pedido] = { valor: 0, loja: item.loja };
+          }
+          groups[item.id_pedido].valor += (Number(item.quantidade) * Number(item.custo_efetivo_pedido));
         });
+
+        let totalGeral = 0;
+        let totalLoja = 0;
+        let totalSite = 0;
+
+        Object.values(groups).forEach(pedido => {
+          totalGeral += pedido.valor;
+          // Portcasa é a loja física no Bling, o resto vai pro montante do site
+          if (pedido.loja === "PORTCASA") {
+            totalLoja += pedido.valor;
+          } else {
+            totalSite += pedido.valor;
+          }
+        });
+
         setComprasStats({
           qtdPedidos: Object.keys(groups).length,
-          valorTotal: Object.values(groups).reduce((acc, val) => acc + val, 0)
+          valorTotal: totalGeral,
+          loja: totalLoja,
+          site: totalSite
         });
       }
 
@@ -141,7 +162,14 @@ export default function VisaoGeralPage() {
           <CardHeader className="pb-2"><CardTitle className="text-xs font-bold uppercase text-slate-400">Patrimônio (Custo)</CardTitle></CardHeader>
           <CardContent>
             <div className="text-2xl font-black text-slate-800">{fCurrency(totalStats.custo)}</div>
-            <p className="text-[10px] mt-1 text-slate-400 font-bold uppercase tracking-tight">Valor Total Imobilizado</p>
+            <div className="flex justify-between mt-2 text-[10px] text-slate-500 font-bold uppercase">
+              <span className="flex items-center gap-1 text-emerald-600">
+                <Store size={10}/> {fCurrency(totalStats.est_loja_total)}
+              </span>
+              <span className="flex items-center gap-1 text-emerald-600">
+                <Globe size={10}/> {fCurrency(totalStats.est_site_total + totalStats.est_full_total)}
+              </span>
+            </div>
           </CardContent>
         </Card>
 
@@ -165,10 +193,22 @@ export default function VisaoGeralPage() {
 
         {/* COMPRAS EM TRÂNSITO */}
         <Card className="border-none shadow-md bg-white border-l-4 border-l-orange-500">
-          <CardHeader className="pb-2"><CardTitle className="text-xs font-bold uppercase text-slate-400">Compras em Trânsito</CardTitle></CardHeader>
+          <CardHeader className="pb-2">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-xs font-bold uppercase text-slate-400">Compras em Trânsito</CardTitle>
+              <span className="text-[10px] text-slate-400 font-bold">{comprasStats.qtdPedidos} peds.</span>
+            </div>
+          </CardHeader>
           <CardContent>
             <div className="text-2xl font-black text-orange-600">{fCurrency(comprasStats.valorTotal)}</div>
-            <p className="text-[10px] mt-1 text-slate-400 font-bold uppercase">{comprasStats.qtdPedidos} pedidos aguardando</p>
+            <div className="flex justify-between mt-2 text-[10px] text-slate-500 font-bold uppercase">
+              <span className="flex items-center gap-1 text-orange-500">
+                <Store size={10}/> {fCurrency(comprasStats.loja)}
+              </span>
+              <span className="flex items-center gap-1 text-orange-500">
+                <Globe size={10}/> {fCurrency(comprasStats.site)}
+              </span>
+            </div>
           </CardContent>
         </Card>
       </div>
