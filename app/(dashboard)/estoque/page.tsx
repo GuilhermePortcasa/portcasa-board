@@ -217,8 +217,10 @@ export default function EstoquePage() {
           >
             <div className="flex items-start gap-2">
               <span className="whitespace-normal leading-tight text-balance">{displayName}</span>
-              {/* NOVO: Mostra SKU se NÃO for pai, OU se for um pai sem filhos (produto simples) */}
-              {(!isParent || !hasVariations) && <Badge variant="outline" className="text-[9px] h-4 font-mono bg-white shrink-0 mt-0.5">{row.original.sku}</Badge>}
+              {/* Agora o SKU sempre aparece, para todos os níveis */}
+              <Badge variant="outline" className="text-[9px] h-4 font-mono bg-white shrink-0 mt-0.5">
+                {row.original.sku}
+              </Badge>
             </div>
             {isParent && <div className="text-[9px] text-slate-400 flex items-center gap-1 mt-1 uppercase tracking-tight font-medium"><Factory size={10}/> {row.original.fornecedor}</div>}
           </div>
