@@ -52,9 +52,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       const { data, error } = await supabase
         .from("mview_dashboard_completa") // <-- NOVO NOME AQUI
         .select("*")
-        .not("sku", "is", null)
-        .limit(15000); 
-          
+        .not("sku", "is", null)          
       if (error) throw error;
 
       // Normalização dos dados

@@ -18,7 +18,7 @@ import { cn } from "@/lib/utils";
 import * as XLSX from 'xlsx';
 import { DashboardHeader } from "@/components/header";
 import Link from "next/link";
-import { ExternalLink, TrendingUp, History, Maximize2, Minimize2, FileSpreadsheet, ArrowUpDown, Truck, Factory, ChevronRight } from "lucide-react";
+import { ExternalLink, ZoomOut, ZoomIn, TrendingUp, History, Maximize2, Minimize2, FileSpreadsheet, ArrowUpDown, Truck, Factory, ChevronRight } from "lucide-react";
 
 // Formatadores
 const fCurrency = (v: number) => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(v || 0);
@@ -31,6 +31,7 @@ export default function EstoquePage() {
   const [expanded, setExpanded] = useState<ExpandedState>({});
   const [sorting, setSorting] = useState<SortingState>([]);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [zoomLevel, setZoomLevel] = useState<number>(1); // <-- LINHA ADICIONADA
   const supabase = createClient();
 
   // --- NOVO: Modal de Histórico de Custos ---
@@ -38,9 +39,10 @@ export default function EstoquePage() {
     isOpen: false, sku: "", nome: "", data: [], loading: false
   });
 
-  const fetchHistoricoCusto = async (sku: string, nome: string) => {
-    // Se clicar em um Produto Pai (que não tem um SKU único de variação), nós não abrimos o histórico.
-    if (!sku) return; 
+  const fetchHistoricoCusto = async (sku: string, nome: string, hasVariations: boolean) => {
+    // PROTEÇÃO: Só bloqueia se for um "Produto Pai" que possui variações escondidas dentro dele.
+    // Se for um produto "Pai" solteiro (sem variação), ele TEM sku, então pode abrir!
+    if (!sku || hasVariations) return; 
     
     setHistoryModal({ isOpen: true, sku, nome, data: [], loading: true });
     
@@ -207,17 +209,16 @@ export default function EstoquePage() {
         return (
           <div 
             className={cn(
-              "flex flex-col max-w-[280px]", // Largura máxima reduzida
+              "flex flex-col max-w-[280px]", 
               isParent ? "font-black text-[13px] text-slate-900" : "pl-6 text-xs text-slate-600",
               hasVariations && "cursor-pointer hover:text-blue-700 transition-colors"
             )}
             onClick={() => hasVariations && row.toggleExpanded()}
           >
-            {/* items-start faz o texto e a badge alinharem pelo topo */}
             <div className="flex items-start gap-2">
-              {/* whitespace-normal permite quebrar a linha, leading-tight melhora o espaçamento das linhas */}
               <span className="whitespace-normal leading-tight text-balance">{displayName}</span>
-              {!isParent && <Badge variant="outline" className="text-[9px] h-4 font-mono bg-white shrink-0 mt-0.5">{row.original.sku}</Badge>}
+              {/* NOVO: Mostra SKU se NÃO for pai, OU se for um pai sem filhos (produto simples) */}
+              {(!isParent || !hasVariations) && <Badge variant="outline" className="text-[9px] h-4 font-mono bg-white shrink-0 mt-0.5">{row.original.sku}</Badge>}
             </div>
             {isParent && <div className="text-[9px] text-slate-400 flex items-center gap-1 mt-1 uppercase tracking-tight font-medium"><Factory size={10}/> {row.original.fornecedor}</div>}
           </div>
@@ -351,7 +352,6 @@ export default function EstoquePage() {
         let custo = 0;
         
         if (row.original.isParent) {
-          // NOVO CÁLCULO PONDERADO PELO ESTOQUE
           const children = row.original.children || [];
           let totalEstoqueValue = 0;
           let totalEstoqueQtd = 0;
@@ -364,13 +364,13 @@ export default function EstoquePage() {
             }
           });
           
-          // Se não tem estoque, faz a média simples dos custos fixos. Se tem, faz ponderada.
           custo = totalEstoqueQtd > 0 ? (totalEstoqueValue / totalEstoqueQtd) : (row.original.sum_unit_cost / (row.original.count || 1));
         } else {
           custo = row.original.custo_final;
         }
 
         const isParent = row.original.isParent;
+        const hasVariations = isParent && row.original.hasVariations;
 
         return (
           <Popover>
@@ -385,7 +385,9 @@ export default function EstoquePage() {
               <div className="flex justify-between py-1">
                 <span>Custo Calculado:</span> <b className="text-blue-600">{fCurrency(custo)}</b>
               </div>
-              {!isParent && (
+              
+              {/* NOVO: Exibe Última Entrada e Botão para Filhos e Pais Sem Variação */}
+              {(!isParent || !hasVariations) && (
                 <>
                   <div className="flex justify-between py-1 text-slate-500">
                     <span>Última Entrada:</span> <span>{fCurrency(row.original.custo_ult_ent)}</span>
@@ -393,13 +395,12 @@ export default function EstoquePage() {
                   <div className="flex justify-between py-1 text-slate-500">
                     <span>Custo Fixo (Padrão):</span> <span>{fCurrency(row.original.custo_padrao)}</span>
                   </div>
-                  {/* NOVO: Botão de Histórico de Preços */}
                   <div className="pt-2 mt-2 border-t border-slate-100">
                     <Button 
                       variant="outline" 
                       size="sm" 
                       className="w-full gap-2 text-blue-600 h-7 text-[10px]"
-                      onClick={() => fetchHistoricoCusto(row.original.sku, row.original.nome)}
+                      onClick={() => fetchHistoricoCusto(row.original.sku, row.original.nome, hasVariations)}
                     >
                       <History size={12}/> Ver Gráfico de Evolução
                     </Button>
@@ -472,49 +473,67 @@ const table = useReactTable({
   return (
     <div className="space-y-6"> {/* Cria um espaçamento entre o header e a tabela */}
     <DashboardHeader />
-    <Card className={cn("shadow-xl rounded-xl border-none overflow-hidden flex flex-col transition-all duration-300 bg-white", isFullscreen ? "fixed inset-0 z-50 m-0 rounded-none h-screen w-screen" : "h-[calc(100vh-180px)] relative")}>
+    <Card className={cn(
+      "shadow-xl rounded-xl border-none overflow-hidden flex flex-col transition-all duration-300 bg-white", 
+      isFullscreen ? "fixed inset-0 z-50 m-0 rounded-none h-screen w-screen" : "h-[calc(100vh-180px)] relative"
+    )}>
+      {/* TOOLBAR SUPERIOR */}
       <div className="flex items-center justify-between px-4 py-2 bg-slate-900 border-b border-slate-700 shrink-0">
         <div className="flex items-center gap-4">
           <Button variant="outline" size="sm" onClick={exportToExcel} className="h-8 bg-green-700 border-green-600 text-white hover:bg-green-600 gap-2 text-[11px] font-bold uppercase">
             <FileSpreadsheet size={14} /> EXPORTAR EXCEL
           </Button>
-          <span className="text-slate-400 text-[10px] uppercase font-medium">
+          <span className="text-slate-400 text-[10px] uppercase font-medium hidden sm:inline-block">
             {table.getFilteredRowModel().rows.length} GRUPOS / {processedData.reduce((acc, curr) => acc + curr.children.length, 0)} SKUS
           </span>
         </div>
-        <Button variant="ghost" size="sm" onClick={() => setIsFullscreen(!isFullscreen)} className="h-8 w-8 p-0 text-slate-400 hover:text-white rounded-full">
-          {isFullscreen ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
-        </Button>
+        
+        <div className="flex items-center gap-2 bg-slate-800 p-1 rounded-md border border-slate-700 shadow-sm text-white">
+          {/* BOTÕES DE ZOOM AQUI */}
+          <Button variant="ghost" size="sm" className="h-6 px-2 text-slate-300 hover:text-white" onClick={() => setZoomLevel((z: number) => Math.max(0.5, z - 0.1))} title="Diminuir Zoom"><ZoomOut size={14}/></Button>
+          <span className="text-[10px] font-bold text-slate-300 w-8 text-center select-none">{Math.round(zoomLevel * 100)}%</span>
+          <Button variant="ghost" size="sm" className="h-6 px-2 text-slate-300 hover:text-white" onClick={() => setZoomLevel((z: number) => Math.min(2, z + 0.1))} title="Aumentar Zoom"><ZoomIn size={14}/></Button>
+          
+          <div className="w-px h-4 bg-slate-600 mx-1"></div>
+          
+          <Button variant="ghost" size="sm" onClick={() => setIsFullscreen(!isFullscreen)} className="h-6 px-2 text-slate-300 hover:text-white gap-2 text-[10px]">
+            {isFullscreen ? <><Minimize2 size={14} /> SAIR</> : <><Maximize2 size={14} /> EXPANDIR</>}
+          </Button>
+        </div>
       </div>
 
+      {/* ÁREA DA TABELA COM ZOOM E OVERFLOW ISOLADO (O segredo do iPad) */}
       <div className="flex-1 overflow-auto bg-white relative">
-        <Table>
-          <TableHeader className="bg-slate-800 sticky top-0 z-20 shadow-sm">
-            {table.getHeaderGroups().map(headerGroup => (
-              <TableRow key={headerGroup.id}>
-                {headerGroup.headers.map(header => (
-                  <TableHead key={header.id} className="text-white text-[10px] uppercase font-bold h-10 px-4">
-                    {flexRender(header.column.columnDef.header, header.getContext())}
-                  </TableHead>
-                ))}
-              </TableRow>
-            ))}
-          </TableHeader>
-          <TableBody>
-            {table.getRowModel().rows.map(row => (
-              <TableRow key={row.id} className={cn(row.original.isParent ? "bg-slate-50/80 font-semibold" : "hover:bg-slate-50 transition-colors")}>
-                {row.getVisibleCells().map(cell => (
-                  <TableCell key={cell.id} className="py-2 px-4 border-b border-slate-100 text-xs text-slate-700">
-                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                  </TableCell>
-                ))}
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+        <div style={{ zoom: zoomLevel }}>
+          <Table>
+            <TableHeader className="bg-slate-800 sticky top-0 z-20 shadow-sm">
+              {table.getHeaderGroups().map(headerGroup => (
+                <TableRow key={headerGroup.id}>
+                  {headerGroup.headers.map(header => (
+                    <TableHead key={header.id} className="text-white text-[10px] uppercase font-bold h-10 px-4">
+                      {flexRender(header.column.columnDef.header, header.getContext())}
+                    </TableHead>
+                  ))}
+                </TableRow>
+              ))}
+            </TableHeader>
+            <TableBody>
+              {table.getRowModel().rows.map(row => (
+                <TableRow key={row.id} className={cn(row.original.isParent ? "bg-slate-50/80 font-semibold" : "hover:bg-slate-50 transition-colors")}>
+                  {row.getVisibleCells().map(cell => (
+                    <TableCell key={cell.id} className="py-2 px-4 border-b border-slate-100 text-xs text-slate-700">
+                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                    </TableCell>
+                  ))}
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
       </div>
 
-      <div className="p-3 flex items-center justify-between bg-slate-50 border-t shrink-0">
+      {/* PAGINAÇÃO FIXA NO RODAPÉ (Fora da área de zoom) */}
+      <div className="p-3 flex items-center justify-between bg-slate-50 border-t shrink-0 pb-safe z-30">
         <div className="text-[10px] text-muted-foreground uppercase font-bold">Página {table.getState().pagination.pageIndex + 1} de {table.getPageCount()}</div>
         <div className="flex gap-2">
           <Button variant="outline" size="sm" className="h-7 text-[10px] font-bold" onClick={() => table.previousPage()} disabled={!table.getCanPreviousPage()}>ANTERIOR</Button>
