@@ -52,11 +52,10 @@ export default function RelatorioMatrizPage() {
   const [fTecido, setFTecido] = useState("all");
   const [fPecas, setFPecas] = useState("all"); // NOVO: Filtro de Peças
 
-  // --- 2. PROCESSAMENTO (100% Baseado em Tags - SKU por SKU) ---
+  // --- 2. PROCESSAMENTO (Otimizado, Lado a Lado e Fallback de Nome) ---
   const { dadosPivot, opcoesFiltro, colunasDinamicas } = useMemo(() => {
     const agrupado: Record<string, any> = {};
     
-    // Coletores para as caixas de Seleção
     const setForn = new Set<string>();
     const setTipo = new Set<string>();
     const setLinha = new Set<string>();
@@ -65,107 +64,144 @@ export default function RelatorioMatrizPage() {
     const setColunas = new Set<string>();
 
     rawData.forEach((item) => {
-      // EXCLUSÃO IMEDIATA: Pula kits estruturais e qualquer produto que NÃO TENHA TAG CADASTRADA
       if (item.tipo === 'E' || !item.tags_string || !item.tag_produto) return;
 
-      let est = 0, v30 = 0, v60 = 0, v90 = 0, andamento = 0;
+      // Pegamos as métricas separadas para usar no modo "Lado a Lado"
+      const estLoja = Number(item.est_loja || 0);
+      const estSite = Number(item.est_site || 0) + Number(item.est_full || 0);
+      const v30Loja = Number(item.v_qtd_30d_loja || 0);
+      const v30Site = Number(item.v_qtd_30d_site || 0);
+      const v60Loja = Number(item.v_qtd_60d_loja || 0);
+      const v60Site = Number(item.v_qtd_60d_site || 0);
+
+      let totalEst = 0, totalV60 = 0, andamento = 0;
       
+      // Filtro de Exclusão (Para não renderizar lixo zerado dependendo da aba)
       if (canalAtivo === "loja") {
-        est = Number(item.est_loja || 0);
-        v30 = Number(item.v_qtd_30d_loja || 0);
-        v60 = Number(item.v_qtd_60d_loja || 0);
-       // v90 = Number(item.v_qtd_90d_loja || 0); // descomente para poder buscar v90
-        andamento = Number(item.qtd_andamento_loja || 0);
+        totalEst = estLoja; totalV60 = v60Loja; andamento = Number(item.qtd_andamento_loja || 0);
       } else if (canalAtivo === "site") {
-        est = Number(item.est_site || 0) + Number(item.est_full || 0);
-        v30 = Number(item.v_qtd_30d_site || 0);
-        v60 = Number(item.v_qtd_60d_site || 0);
-       // v90 = Number(item.v_qtd_90d_site || 0); // descomente para poder buscar v90
-        andamento = Number(item.qtd_andamento_site || 0);
+        totalEst = estSite; totalV60 = v60Site; andamento = Number(item.qtd_andamento_site || 0);
       } else {
-        est = Number(item.est_total || 0);
-        v30 = Number(item.v_qtd_30d_site || 0) + Number(item.v_qtd_30d_loja || 0);
-        v60 = Number(item.v_qtd_60d_site || 0) + Number(item.v_qtd_60d_loja || 0);
-      //  v90 = Number(item.v_qtd_90d_site || 0) + Number(item.v_qtd_90d_loja || 0); // descomente para poder buscar v90
-        andamento = Number(item.qtd_andamento || 0);
+        totalEst = estLoja + estSite; totalV60 = v60Loja + v60Site; andamento = Number(item.qtd_andamento || 0);
       }
 
-      // EXCLUSÃO: Oculta inativos e zerados
-      if (est === 0 && v60 === 0 && andamento === 0) return;
-      // troca para if (est === 0 && v90 === 0 && andamento === 0) return; se quiser ver v90
+      if (totalEst === 0 && totalV60 === 0 && andamento === 0) return;
 
-      // EXTRATORES (Direto das Tags do BD)
       const sku = item.sku;
-      const nome = item.nome;
+      const nomeOriginal = item.nome || "";
       const forn = (item.fornecedor || "SEM FORNECEDOR").trim();
-      const tipo = (item.tag_produto || "Sem Produto").trim();
-      const linha = (item.tag_linha || "Sem Linha").trim();
-      const tecido = (item.tag_tecido || "Sem Tecido").trim();
+      const tipo = (item.tag_produto || "").trim();
+      const linha = (item.tag_linha || "").trim();
+      const tecido = (item.tag_tecido || "").trim();
       const tamanho = (item.tag_tamanho || "ÚNICO").trim().toUpperCase();
       
-      // Tratamento de Peças para garantir o texto "Peças"
       let pecas = (item.tag_pecas || "").trim();
       if (pecas !== "" && !isNaN(Number(pecas))) pecas = `${pecas} Peças`;
 
-      // LÓGICA DE FILTROS RESPONSIVOS (CASCATA)
       const matchForn = fForn === "all" || forn === fForn;
       const matchTipo = fTipo === "all" || tipo === fTipo;
       const matchLinha = fLinha === "all" || linha === fLinha;
       const matchTecido = fTecido === "all" || tecido === fTecido;
       const matchPecas = fPecas === "all" || pecas === fPecas;
 
-      // Alimenta os selects APENAS se a linha passar em todos os OUTROS filtros
       if (matchTipo && matchLinha && matchTecido && matchPecas) setForn.add(forn);
-      if (matchForn && matchLinha && matchTecido && matchPecas) setTipo.add(tipo);
-      if (matchForn && matchTipo && matchTecido && matchPecas) setLinha.add(linha);
+      if (matchForn && matchLinha && matchTecido && matchPecas) if (tipo) setTipo.add(tipo);
+      if (matchForn && matchTipo && matchTecido && matchPecas) if (linha) setLinha.add(linha);
       if (matchForn && matchTipo && matchLinha && matchPecas) if (tecido) setTecido.add(tecido);
       if (matchForn && matchTipo && matchLinha && matchTecido) if (pecas) setPecas.add(pecas);
 
-      // Aplica os filtros para a Tabela: Só continua se casar com TODOS
       if (!(matchForn && matchTipo && matchLinha && matchTecido && matchPecas)) return;
 
-      // NOVO: A coluna agora é a união de Tamanho + Peças (Ex: "SOLTEIRO - 3 PEÇAS")
-      const colunaChave = pecas ? `${tamanho} - ${pecas.toUpperCase()}` : tamanho;
+      // 1. CRIAÇÃO DO NOME DO PAI COM FALLBACK E LIMPEZA DE TAMANHO
+      let nomePai = "";
+      const isOutros = linha.toUpperCase() === "OUTROS" || tipo.toUpperCase() === "OUTROS";
+      const isIncompleto = !tipo || !linha || tipo === "Sem Produto" || linha === "Sem Linha";
+
+      if (isOutros || isIncompleto) {
+        // Fallback: Usa o nome original até os 2 pontos (:)
+        let fallbackNome = (item.nome_pai || nomeOriginal).split(":")[0].toUpperCase();
+        
+        // OTIMIZAÇÃO: Remove o tamanho do nome do produto para garantir que o grupo case perfeitamente
+        if (tamanho && tamanho !== "ÚNICO") {
+          if (tamanho === "KING") {
+            // Truque seguro: Mascara o Super King/S.King temporariamente, apaga o King, depois volta o Super
+            fallbackNome = fallbackNome.replace(/SUPER KING/g, "##SK##").replace(/S\.KING/g, "##SK##");
+            fallbackNome = fallbackNome.replace(new RegExp(`\\bKING\\b`, "g"), "");
+            fallbackNome = fallbackNome.replace(/##SK##/g, "SUPER KING");
+          } else if (tamanho === "SUPER KING" || tamanho === "S.KING") {
+            fallbackNome = fallbackNome.replace(/SUPER KING/g, "").replace(/S\.KING/g, "");
+          } else {
+            fallbackNome = fallbackNome.replace(new RegExp(`\\b${tamanho}\\b`, "g"), "");
+          }
+        }
+        
+        // Limpa espaços duplos e hífens abandonados (ex: "JOGO -  AZUL" vira "JOGO AZUL")
+        nomePai = fallbackNome.replace(/\s+/g, " ").replace(/ - /g, " ").trim();
+        
+      } else {
+        // Monta Dinâmico
+        const arrPai = [tipo, linha];
+        if (pecas) arrPai.push(pecas);
+        if (tecido && tecido !== "Sem Tecido") arrPai.push(tecido);
+        nomePai = arrPai.join(" ");
+      }
+
+      // 2. EXTRAÇÃO DA VARIAÇÃO
+      let variacao = "ÚNICA";
+      if (nomeOriginal.includes(":")) {
+        variacao = nomeOriginal.substring(nomeOriginal.indexOf(":") + 1).trim();
+      } else if (nomeOriginal.includes("-")) {
+        variacao = nomeOriginal.split("-").pop()?.trim() || "ÚNICA";
+      }
+
+      const colunaChave = tamanho;
       setColunas.add(colunaChave);
 
       const custo = Number(item.custo_ult_ent || item.custo_final || 0);
       const preco = Number(canalAtivo === "site" ? (item.ultimo_preco_site || item.preco_venda_padrao) : item.preco_venda_padrao || 0);
 
-      // HIERARQUIA PLANA: Fornecedor -> SKU
-      if (!agrupado[forn]) agrupado[forn] = { nome: forn, skus: {} };
-      if (!agrupado[forn].skus[sku]) {
-        agrupado[forn].skus[sku] = { 
-          sku: sku, 
-          nome: nome, 
-          colunas: {} // Guarda os valores dentro da coluna específica desse SKU
+      // 4. AGRUPAMENTO
+      if (!agrupado[forn]) agrupado[forn] = { nome: forn, produtos: {} };
+      if (!agrupado[forn].produtos[nomePai]) agrupado[forn].produtos[nomePai] = { nome: nomePai, variacoes: {} };
+
+      const prodObj = agrupado[forn].produtos[nomePai];
+
+      if (!prodObj.variacoes[variacao]) {
+        prodObj.variacoes[variacao] = { 
+          nome: variacao, 
+          // OTIMIZAÇÃO DE PERFORMANCE: Pré-calcula a string de busca uma única vez
+          searchString: `${sku} ${nomePai} ${variacao}`.toLowerCase(),
+          colunas: {} 
         };
       }
 
-      const skuObj = agrupado[forn].skus[sku];
+      const varObj = prodObj.variacoes[variacao];
 
-      if (!skuObj.colunas[colunaChave]) {
-        skuObj.colunas[colunaChave] = { est: 0, v30: 0, v60: 0, custo: 0, preco: 0 };
+      if (!varObj.colunas[colunaChave]) {
+        varObj.colunas[colunaChave] = { 
+          estLoja: 0, estSite: 0, 
+          v30Loja: 0, v30Site: 0, 
+          v60Loja: 0, v60Site: 0, 
+          custo: 0, preco: 0 
+        };
       }
 
-      // Preenche os dados exatos na interseção SKU x Coluna
-      skuObj.colunas[colunaChave].est += est;
-      skuObj.colunas[colunaChave].v30 += v30;
-      skuObj.colunas[colunaChave].v60 += v60;
-      skuObj.colunas[colunaChave].custo = Math.max(skuObj.colunas[colunaChave].custo, custo);
-      skuObj.colunas[colunaChave].preco = Math.max(skuObj.colunas[colunaChave].preco, preco);
+      // Acumula mantendo a separação
+      varObj.colunas[colunaChave].estLoja += estLoja;
+      varObj.colunas[colunaChave].estSite += estSite;
+      varObj.colunas[colunaChave].v30Loja += v30Loja;
+      varObj.colunas[colunaChave].v30Site += v30Site;
+      varObj.colunas[colunaChave].v60Loja += v60Loja;
+      varObj.colunas[colunaChave].v60Site += v60Site;
+      varObj.colunas[colunaChave].custo = Math.max(varObj.colunas[colunaChave].custo, custo);
+      varObj.colunas[colunaChave].preco = Math.max(varObj.colunas[colunaChave].preco, preco);
     });
 
-    // ORGANIZA AS COLUNAS DINÂMICAS LENDO A ORDEM DOS TAMANHOS
+    // ORGANIZA COLUNAS
     const arrayColunas = Array.from(setColunas).sort((a, b) => {
-      const tamA = a.split(" - ")[0];
-      const tamB = b.split(" - ")[0];
-      const idxA = ORDEM_TAMANHOS.indexOf(tamA);
-      const idxB = ORDEM_TAMANHOS.indexOf(tamB);
-      
-      if (idxA !== -1 && idxB !== -1) {
-        if (idxA === idxB) return a.localeCompare(b); // Se mesmo tamanho, desempata pelas peças
-        return idxA - idxB;
-      }
+      const idxA = ORDEM_TAMANHOS.indexOf(a);
+      const idxB = ORDEM_TAMANHOS.indexOf(b);
+      if (idxA !== -1 && idxB !== -1) return idxA - idxB;
       if (idxA !== -1) return -1;
       if (idxB !== -1) return 1;
       return a.localeCompare(b);
@@ -173,23 +209,23 @@ export default function RelatorioMatrizPage() {
 
     const termo = busca.toLowerCase();
     
-    // Converte os objetos em Arrays para o Map do React
     let resultadoFinal = Object.values(agrupado).map((f: any) => {
-      let skusArray = Object.values(f.skus).sort((a: any, b: any) => a.nome.localeCompare(b.nome));
+      let prodsArray = Object.values(f.produtos).map((p: any) => {
+        let varsArray = Object.values(p.variacoes).sort((a: any, b: any) => a.nome.localeCompare(b.nome));
+        return { ...p, varsArray };
+      }).sort((a: any, b: any) => a.nome.localeCompare(b.nome));
 
-      // Busca Livre (Procura no SKU ou no Nome)
+      // Busca Ultra-Rápida usando a searchString cacheada
       if (termo) {
-        skusArray = skusArray.filter((s: any) => 
-          s.sku.toLowerCase().includes(termo) || 
-          s.nome.toLowerCase().includes(termo) ||
-          f.nome.toLowerCase().includes(termo)
+        prodsArray = prodsArray.filter((p: any) => 
+          p.varsArray.some((v: any) => v.searchString.includes(termo))
         );
       }
 
-      return { ...f, skusArray };
+      return { ...f, prodsArray };
     });
 
-    resultadoFinal = resultadoFinal.filter(f => f.skusArray.length > 0);
+    resultadoFinal = resultadoFinal.filter(f => f.prodsArray.length > 0);
     resultadoFinal.sort((a, b) => a.nome.localeCompare(b.nome));
 
     return {
@@ -207,42 +243,39 @@ export default function RelatorioMatrizPage() {
 
   // --- FUNÇÃO DE EXPORTAÇÃO EXCEL (CSV) ---
   const exportarParaExcel = () => {
-    // 1. Monta o Cabeçalho Dinâmico
-    let cabecalho = ["Fornecedor", "SKU", "Produto Original"];
+    let cabecalho = ["Fornecedor", "Produto Principal", "Variacao (Cor/Modelo)"];
+    
     colunasDinamicas.forEach(col => {
-      cabecalho.push(`${col} (EST)`);
-      cabecalho.push(`${col} (V.30)`);
-      cabecalho.push(`${col} (V.60)`);
-      cabecalho.push(`${col} (CUSTO)`);
-      cabecalho.push(`${col} (VENDA)`);
+      if (canalAtivo === "geral") {
+        cabecalho.push(`${col} (EST LOJA)`, `${col} (EST SITE)`, `${col} (V.30 LOJA)`, `${col} (V.30 SITE)`);
+      } else {
+        cabecalho.push(`${col} (EST)`, `${col} (V.30)`, `${col} (V.60)`, `${col} (CUSTO)`, `${col} (VENDA)`);
+      }
     });
+    
     let csvContent = cabecalho.join(";") + "\n";
 
-    // 2. Monta as linhas horizontais
     dadosPivot.forEach((forn: any) => {
-      forn.skusArray.forEach((prod: any) => {
-        let linhaCSV = [
-          `"${forn.nome}"`,
-          `"${prod.sku}"`,
-          `"${prod.nome.replace(/"/g, '""')}"`
-        ];
+      forn.prodsArray.forEach((prod: any) => {
+        prod.varsArray.forEach((vr: any) => {
+          let linhaCSV = [`"${forn.nome}"`, `"${prod.nome.replace(/"/g, '""')}"`, `"${vr.nome.replace(/"/g, '""')}"`];
 
-        colunasDinamicas.forEach(col => {
-          const stats = prod.colunas[col];
-          if (stats) {
-            linhaCSV.push(
-              stats.est,
-              stats.v30,
-              stats.v60,
-              stats.custo.toFixed(2).replace('.', ','),
-              stats.preco.toFixed(2).replace('.', ',')
-            );
-          } else {
-            linhaCSV.push("-", "-", "-", "-", "-"); // Preenche os vazios
-          }
+          colunasDinamicas.forEach(col => {
+            const stats = vr.colunas[col];
+            if (!stats) {
+              linhaCSV.push(...Array(canalAtivo === "geral" ? 4 : 5).fill("-"));
+            } else if (canalAtivo === "geral") {
+              linhaCSV.push(stats.estLoja, stats.estSite, stats.v30Loja, stats.v30Site);
+            } else {
+              const estValue = canalAtivo === "loja" ? stats.estLoja : stats.estSite;
+              const v30Value = canalAtivo === "loja" ? stats.v30Loja : stats.v30Site;
+              const v60Value = canalAtivo === "loja" ? stats.v60Loja : stats.v60Site;
+              linhaCSV.push(estValue, v30Value, v60Value, stats.custo.toFixed(2).replace('.', ','), stats.preco.toFixed(2).replace('.', ','));
+            }
+          });
+          
+          csvContent += linhaCSV.join(";") + "\n";
         });
-        
-        csvContent += linhaCSV.join(";") + "\n";
       });
     });
 
@@ -251,9 +284,8 @@ export default function RelatorioMatrizPage() {
     const link = document.createElement("a");
     link.setAttribute("href", url);
     link.setAttribute("download", `Relatorio_Matriz_${new Date().toISOString().slice(0,10)}.csv`);
-    document.body.appendChild(link);
+    document.body.click();
     link.click();
-    document.body.removeChild(link);
   };
 
   if (loading) return <div className="p-10 text-center animate-pulse text-slate-500">Sincronizando Tags e Montando Matriz...</div>;
@@ -378,8 +410,8 @@ export default function RelatorioMatrizPage() {
               
               <thead className="bg-slate-900 text-white sticky top-0 z-30 shadow-md">
                 <tr>
-                  <th className="sticky top-0 left-0 z-40 bg-slate-900 p-3 border-r border-slate-700 w-[400px] shadow-[2px_0_5px_-2px_rgba(0,0,0,0.3)]" rowSpan={2}>
-                    PRODUTO (SKU E NOME ORIGINAL)
+                  <th className="sticky top-0 left-0 z-40 bg-slate-900 p-3 border-r border-slate-700 w-[350px] shadow-[2px_0_5px_-2px_rgba(0,0,0,0.3)]" rowSpan={2}>
+                    PRODUTO / VARIAÇÃO
                   </th>
                   {colunasDinamicas.length === 0 && (
                     <th className="p-2 border-r border-slate-700 text-center font-bold text-[11px] bg-slate-800">
@@ -387,17 +419,30 @@ export default function RelatorioMatrizPage() {
                     </th>
                   )}
                   {colunasDinamicas.map(col => (
-                    <th key={col} colSpan={3} className="p-2 border-r border-slate-700 text-center font-bold tracking-widest text-[10px] bg-slate-800 uppercase">
+                    <th key={col} colSpan={canalAtivo === "geral" ? 6 : 3} className="p-2 border-r border-slate-700 text-center font-bold tracking-widest text-[10px] bg-slate-800 uppercase">
                       {col}
                     </th>
                   ))}
                 </tr>
-                <tr className="bg-slate-800 text-[10px] text-slate-300">
+                <tr className="bg-slate-800 text-[9px] text-slate-300">
                   {colunasDinamicas.map(col => (
                     <React.Fragment key={`sub-${col}`}>
-                      <th className="p-2 text-center border-r border-slate-700 w-20 text-emerald-400">ESTOQUE</th>
-                      <th className="p-2 text-center border-r border-slate-700 w-20">VENDA 30</th>
-                      <th className="p-2 text-center border-r border-slate-700 w-20">VENDA 60</th>
+                      {canalAtivo === "geral" ? (
+                        <>
+                          <th className="p-1.5 text-center border-r border-slate-700/50 w-12 text-orange-400 bg-orange-950/20" title="Estoque Loja">E. LJ</th>
+                          <th className="p-1.5 text-center border-r border-slate-700 w-12 text-blue-400 bg-blue-950/20" title="Estoque Site">E. ST</th>
+                          <th className="p-1.5 text-center border-r border-slate-700/50 w-12 text-orange-200 bg-orange-950/20" title="Venda 30d Loja">V. LJ</th>
+                          <th className="p-1.5 text-center border-r border-slate-700 w-12 text-blue-200 bg-blue-950/20" title="Venda 30d Site">V. ST</th>
+                          <th className="p-1.5 text-center border-r border-slate-700/50 w-12 text-orange-200/50 bg-orange-950/20" title="Venda 60d Loja">60 LJ</th>
+                          <th className="p-1.5 text-center border-r border-slate-700 w-12 text-blue-200/50 bg-blue-950/20" title="Venda 60d Site">60 ST</th>
+                        </>
+                      ) : (
+                        <>
+                          <th className="p-2 text-center border-r border-slate-700 w-20 text-emerald-400">ESTOQUE</th>
+                          <th className="p-2 text-center border-r border-slate-700 w-20">VENDA 30</th>
+                          <th className="p-2 text-center border-r border-slate-700 w-20">VENDA 60</th>
+                        </>
+                      )}
                     </React.Fragment>
                   ))}
                 </tr>
@@ -412,9 +457,9 @@ export default function RelatorioMatrizPage() {
                 </tr>
               )}
               
-              {dadosPivot.map((forn) => (
+              {dadosPivot.map((forn: any) => (
                 <React.Fragment key={forn.nome}>
-                  {/* FORNECEDOR */}
+                  {/* FORNECEDOR (Nível 1) */}
                   <tr className="bg-slate-300 border-y border-slate-400">
                     <td className="sticky left-0 z-10 bg-slate-300 p-2 font-black text-slate-800 uppercase flex items-center gap-2 text-[11px] border-r border-slate-400 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
                       <Store size={14}/> {forn.nome}
@@ -422,58 +467,84 @@ export default function RelatorioMatrizPage() {
                     <td colSpan={colunasDinamicas.length * 3} className="bg-slate-300"></td>
                   </tr>
 
-                  {/* LISTA PLANA DE SKUs */}
-                  {forn.skusArray.map((prod: any) => (
-                    <tr key={prod.sku} className="hover:bg-slate-50 transition-colors border-b border-slate-200">
-                      
-                      {/* NOME DO PRODUTO FIXO À ESQUERDA */}
-                      <td className="sticky left-0 z-10 bg-white p-2 pl-4 border-r shadow-[2px_0_5px_-2px_rgba(0,0,0,0.05)]">
-                        <div className="flex items-center gap-2">
-                          <span className="text-[10px] font-bold text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">
-                            {prod.sku}
-                          </span>
-                          <span className="font-semibold text-slate-700 text-[11px] leading-tight">
-                            {prod.nome}
-                          </span>
-                        </div>
-                      </td>
-                      
-                      {/* DADOS NAS COLUNAS DINÂMICAS */}
-                      {colunasDinamicas.map(col => {
-                        const stats = prod.colunas[col];
+                  {forn.prodsArray.map((prod: any) => (
+                    <React.Fragment key={prod.nome}>
+                      {/* PRODUTO PAI DINÂMICO (Nível 2) */}
+                      <tr className="bg-slate-100/80 border-b border-slate-200">
+                        <td className="sticky left-0 z-10 bg-slate-100/80 p-2 pl-4 border-r font-bold text-slate-700 text-[11px] uppercase tracking-tight shadow-[2px_0_5px_-2px_rgba(0,0,0,0.05)]">
+                          {prod.nome}
+                        </td>
+                        <td colSpan={colunasDinamicas.length * 3} className="bg-slate-100/80"></td>
+                      </tr>
 
-                        if (!stats) {
-                          // Se o SKU não pertence a essa coluna (ex: o SKU é Queen e a coluna é King), fica vazio
-                          return (
-                            <React.Fragment key={`${prod.sku}-empty-${col}`}>
-                              <td className="border-r bg-slate-50/20 text-center text-slate-300">-</td>
-                              <td className="border-r bg-slate-50/20 text-center text-slate-300">-</td>
-                              <td className="border-r bg-slate-50/20 text-center text-slate-300">-</td>
-                            </React.Fragment>
-                          );
-                        }
+                      {/* VARIAÇÕES / CORES (Nível 3) */}
+                      {prod.varsArray.map((vr: any) => (
+                        <tr key={vr.nome} className="hover:bg-blue-50/30 transition-colors border-b border-slate-100">
+                          
+                          {/* NOME DA VARIAÇÃO À ESQUERDA */}
+                          <td className="sticky left-0 z-10 bg-white p-2 pl-8 border-r shadow-[2px_0_5px_-2px_rgba(0,0,0,0.05)]">
+                            <span className="font-semibold text-slate-600 text-[11px] leading-tight">
+                              {vr.nome}
+                            </span>
+                          </td>
+                          
+                          {/* DADOS NAS COLUNAS DE TAMANHO */}
+                          {colunasDinamicas.map(col => {
+                            const stats = vr.colunas[col];
+                            const isGeral = canalAtivo === "geral";
 
-                        return (
-                          <React.Fragment key={`${prod.sku}-${col}`}>
-                            <td className="py-1.5 px-2 text-center border-r bg-white">
-                              <div className="font-bold text-emerald-600">{stats.est > 0 ? fNum(stats.est) : "-"}</div>
-                              {stats.custo > 0 && <div className="text-[9px] text-orange-500 font-semibold mt-0.5">C: {fCurrency(stats.custo)}</div>}
-                            </td>
-                            <td className="py-1.5 px-2 text-center border-r bg-white">
-                              <div className="font-bold text-slate-700">{stats.v30 > 0 ? fNum(stats.v30) : "-"}</div>
-                              {stats.preco > 0 && <div className="text-[9px] text-blue-600 font-bold mt-0.5">V: {fCurrency(stats.preco)}</div>}
-                            </td>
-                            <td className="py-1.5 px-2 text-center border-r bg-white font-medium text-slate-500">
-                              {stats.v60 > 0 ? fNum(stats.v60) : "-"}
-                            </td>
-                          </React.Fragment>
-                        );
-                      })}
-                    </tr>
+                            if (!stats) {
+                              const emptyCells = isGeral ? 6 : 3;
+                              return (
+                                <React.Fragment key={`${vr.nome}-empty-${col}`}>
+                                  {Array.from({ length: emptyCells }).map((_, i) => (
+                                    <td key={i} className={`border-r bg-slate-50/40 text-center text-slate-200 ${isGeral && (i===1 || i===3 || i===5) ? 'border-r-slate-300' : ''}`}>-</td>
+                                  ))}
+                                </React.Fragment>
+                              );
+                            }
+
+                            if (isGeral) {
+                              return (
+                                <React.Fragment key={`${vr.nome}-${col}`}>
+                                  <td className="py-1.5 px-1 text-center border-r border-slate-100 bg-orange-50/30 font-bold text-orange-600">{stats.estLoja > 0 ? fNum(stats.estLoja) : "-"}</td>
+                                  <td className="py-1.5 px-1 text-center border-r border-slate-300 bg-blue-50/30 font-bold text-blue-600">{stats.estSite > 0 ? fNum(stats.estSite) : "-"}</td>
+                                  <td className="py-1.5 px-1 text-center border-r border-slate-100 bg-orange-50/10 font-bold text-slate-700">{stats.v30Loja > 0 ? fNum(stats.v30Loja) : "-"}</td>
+                                  <td className="py-1.5 px-1 text-center border-r border-slate-300 bg-blue-50/10 font-bold text-slate-700">{stats.v30Site > 0 ? fNum(stats.v30Site) : "-"}</td>
+                                  <td className="py-1.5 px-1 text-center border-r border-slate-100 bg-orange-50/10 text-slate-400">{stats.v60Loja > 0 ? fNum(stats.v60Loja) : "-"}</td>
+                                  <td className="py-1.5 px-1 text-center border-r border-slate-300 bg-blue-50/10 text-slate-400">{stats.v60Site > 0 ? fNum(stats.v60Site) : "-"}</td>
+                                </React.Fragment>
+                              );
+                            }
+
+                            // Visão Específica (Loja ou Site individualmente)
+                            const estValue = canalAtivo === "loja" ? stats.estLoja : stats.estSite;
+                            const v30Value = canalAtivo === "loja" ? stats.v30Loja : stats.v30Site;
+                            const v60Value = canalAtivo === "loja" ? stats.v60Loja : stats.v60Site;
+
+                            return (
+                              <React.Fragment key={`${vr.nome}-${col}`}>
+                                <td className="py-1.5 px-2 text-center border-r bg-white">
+                                  <div className="font-bold text-emerald-600">{estValue > 0 ? fNum(estValue) : "-"}</div>
+                                  {stats.custo > 0 && <div className="text-[9px] text-orange-500 font-semibold mt-0.5">C: {fCurrency(stats.custo)}</div>}
+                                </td>
+                                <td className="py-1.5 px-2 text-center border-r bg-white">
+                                  <div className="font-bold text-slate-700">{v30Value > 0 ? fNum(v30Value) : "-"}</div>
+                                  {stats.preco > 0 && <div className="text-[9px] text-blue-600 font-bold mt-0.5">V: {fCurrency(stats.preco)}</div>}
+                                </td>
+                                <td className="py-1.5 px-2 text-center border-r bg-white font-medium text-slate-500">
+                                  {v60Value > 0 ? fNum(v60Value) : "-"}
+                                </td>
+                              </React.Fragment>
+                            );
+                          })}
+                        </tr>
+                      ))}
+                    </React.Fragment>
                   ))}
                 </React.Fragment>
               ))}
-            </tbody>
+              </tbody>
           </table>
           </div>
         </div>

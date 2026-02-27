@@ -215,3 +215,17 @@ if __name__ == "__main__":
         
     for loja in ["PORTFIO", "PORTCASA"]:
         processar_loja(loja)
+
+    # --- NOVO: GATILHO DE ATUALIZAÇÃO DA VIEW DO DASHBOARD ---
+    print("\n🔄 Sincronização concluída. Disparando atualização da View Gerencial no Banco...")
+    try:
+        r = requests.post(
+            f"{SUPABASE_URL}/rest/v1/rpc/refresh_mview_dashboard", 
+            headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json"}
+        )
+        if r.status_code in [200, 204]:
+            print("✨ View do Dashboard recarregada com sucesso e pronta para uso!")
+        else:
+            print(f"⚠️ Aviso: Falha ao recarregar a View. O site usará dados do último ciclo. ({r.text})")
+    except Exception as e:
+        print(f"⚠️ Erro ao acionar o gatilho da View: {e}")

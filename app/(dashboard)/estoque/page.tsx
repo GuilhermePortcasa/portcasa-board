@@ -6,7 +6,8 @@ import {
   ColumnDef, flexRender, getCoreRowModel, useReactTable,
   getExpandedRowModel, getPaginationRowModel, ExpandedState, getSortedRowModel, SortingState,
 } from "@tanstack/react-table";
-import { ArrowUpDown, ChevronRight, Factory, Truck, Maximize2, Minimize2, FileSpreadsheet } from "lucide-react";
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
+import { createClient } from "@/utils/supabase/client";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -17,7 +18,7 @@ import { cn } from "@/lib/utils";
 import * as XLSX from 'xlsx';
 import { DashboardHeader } from "@/components/header";
 import Link from "next/link";
-import { ExternalLink, TrendingUp } from "lucide-react";
+import { ExternalLink, TrendingUp, History, Maximize2, Minimize2, FileSpreadsheet, ArrowUpDown, Truck, Factory, ChevronRight } from "lucide-react";
 
 // Formatadores
 const fCurrency = (v: number) => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(v || 0);
@@ -25,12 +26,39 @@ const fNum = (v: number) => new Intl.NumberFormat("pt-BR").format(v || 0);
 const fPerc = (v: number) => new Intl.NumberFormat("pt-BR", { style: "percent", minimumFractionDigits: 1 }).format((v || 0) / 100);
 
 export default function EstoquePage() {
-  // Pega os dados já processados, filtrados e com SKU do pai corrigido do Contexto
-  const { processedData, canal, search } = useDashboard(); // Adicione 'search' aqui
+  const { processedData, canal, search } = useDashboard(); 
   
   const [expanded, setExpanded] = useState<ExpandedState>({});
   const [sorting, setSorting] = useState<SortingState>([]);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const supabase = createClient();
+
+  // --- NOVO: Modal de Histórico de Custos ---
+  const [historyModal, setHistoryModal] = useState<{isOpen: boolean, sku: string, nome: string, data: any[], loading: boolean}>({
+    isOpen: false, sku: "", nome: "", data: [], loading: false
+  });
+
+  const fetchHistoricoCusto = async (sku: string, nome: string) => {
+    // Se clicar em um Produto Pai (que não tem um SKU único de variação), nós não abrimos o histórico.
+    if (!sku) return; 
+    
+    setHistoryModal({ isOpen: true, sku, nome, data: [], loading: true });
+    
+    const { data } = await supabase
+      .from("view_historico_entradas")
+      .select("*")
+      .eq("sku", sku)
+      .order("data_ref", { ascending: true })
+      .limit(100);
+
+    const chartData = (data || []).map(item => ({
+      ...item,
+      data_curta: item.data_ref ? new Date(item.data_ref).toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' }) : '',
+      valor_num: Number(Number(item.custo_real).toFixed(2)) 
+    }));
+
+    setHistoryModal({ isOpen: true, sku, nome, data: chartData, loading: false });
+  };
 
   // --- EXPORTAÇÃO XLSX ---
   // (Mantém a lógica de exportação, mas usando processedData que já vem pronto)
@@ -365,6 +393,17 @@ export default function EstoquePage() {
                   <div className="flex justify-between py-1 text-slate-500">
                     <span>Custo Fixo (Padrão):</span> <span>{fCurrency(row.original.custo_padrao)}</span>
                   </div>
+                  {/* NOVO: Botão de Histórico de Preços */}
+                  <div className="pt-2 mt-2 border-t border-slate-100">
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      className="w-full gap-2 text-blue-600 h-7 text-[10px]"
+                      onClick={() => fetchHistoricoCusto(row.original.sku, row.original.nome)}
+                    >
+                      <History size={12}/> Ver Gráfico de Evolução
+                    </Button>
+                  </div>
                 </>
               )}
             </PopoverContent>
@@ -482,6 +521,77 @@ const table = useReactTable({
           <Button variant="outline" size="sm" className="h-7 text-[10px] font-bold" onClick={() => table.nextPage()} disabled={!table.getCanNextPage()}>PRÓXIMA</Button>
         </div>
       </div>
+
+      {/* --- NOVO: MODAL DE HISTÓRICO DE PREÇOS (COLE ISSO ANTES DA DIV FINAL) --- */}
+      <Dialog open={historyModal.isOpen} onOpenChange={(v) => setHistoryModal(prev => ({...prev, isOpen: v}))}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <History className="text-blue-600" /> Evolução de Preços de Compra
+            </DialogTitle>
+            <div className="text-sm text-slate-500 font-medium pt-2 border-b pb-2">
+              <span className="font-mono bg-slate-100 px-1 rounded text-slate-700">{historyModal.sku}</span> {historyModal.nome}
+            </div>
+          </DialogHeader>
+          
+          <div className="mt-2 space-y-6">
+            {historyModal.loading ? (
+              <div className="text-center py-10 text-sm text-slate-400">Carregando histórico...</div>
+            ) : historyModal.data.length === 0 ? (
+              <div className="text-center py-10 text-sm text-slate-400">Nenhuma compra anterior encontrada para este produto.</div>
+            ) : (
+              <>
+                <div className="h-48 w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={historyModal.data} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                      <XAxis dataKey="data_curta" tick={{fontSize: 10, fill: '#64748b'}} tickLine={false} axisLine={false} />
+                      <YAxis tickFormatter={(val) => `R$ ${val}`} tick={{fontSize: 10, fill: '#64748b'}} tickLine={false} axisLine={false} width={60} />
+                      <Tooltip 
+                        formatter={(value: any) => [fCurrency(value), "Custo Real"]}
+                        labelFormatter={(label, payload) => {
+                          const item = payload?.[0]?.payload;
+                          return item ? `Data: ${new Date(item.data_ref).toLocaleDateString('pt-BR')} (${item.tipo})` : label;
+                        }}
+                        contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)', fontSize: '12px' }}
+                      />
+                      <Line type="monotone" dataKey="valor_num" stroke="#2563eb" strokeWidth={2} dot={{ r: 4, fill: '#2563eb', strokeWidth: 0 }} activeDot={{ r: 6 }} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+
+                <div>
+                  <h4 className="text-xs font-bold text-slate-500 uppercase mb-2">Últimas 5 Aquisições</h4>
+                  <table className="w-full text-left text-sm border-t border-slate-100">
+                    <thead>
+                      <tr className="border-b border-slate-100 bg-slate-50">
+                        <th className="py-1 px-2 text-[10px] text-slate-500 font-semibold">Data</th>
+                        <th className="py-1 px-2 text-[10px] text-slate-500 font-semibold text-center">Tipo</th>
+                        <th className="py-1 px-2 text-[10px] text-slate-500 font-semibold">Doc / NFE</th>
+                        <th className="py-1 px-2 text-[10px] text-slate-500 font-semibold">Fornecedor</th>
+                        <th className="py-1 px-2 text-[10px] text-slate-500 font-semibold text-right">Custo Real</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {[...historyModal.data].reverse().slice(0, 5).map((h, i) => (
+                        <tr key={i} className="border-b last:border-0 border-slate-100">
+                          <td className="py-1 px-2 text-xs text-slate-700">{h.data_ref ? new Date(h.data_ref).toLocaleDateString('pt-BR') : "-"}</td>
+                          <td className="py-1 px-2 text-xs text-center">
+                            <Badge variant="secondary" className="text-[9px] font-mono">{h.tipo}</Badge>
+                          </td>
+                          <td className="py-1 px-2 text-xs text-slate-500">{h.doc || "-"}</td>
+                          <td className="py-1 px-2 text-xs text-slate-500 truncate max-w-[150px]" title={h.fornecedor}>{h.fornecedor || "-"}</td>
+                          <td className="py-1 px-2 text-xs text-right font-bold text-slate-800">{fCurrency(h.valor_num)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </Card>
     </div>
   );

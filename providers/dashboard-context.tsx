@@ -41,7 +41,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
   const isFirstLoadRef = useRef(true);
 
-  // 1. FETCH SIMPLIFICADO (Carga Otimizada com Paginação Automática)
+  // 1. FETCH OTIMIZADO PARA MATERIALIZED VIEW
   const fetchAll = useCallback(async (isSilent = false) => {
     if (!isSilent) setLoading(true); 
     else setIsRefreshing(true);
@@ -49,37 +49,16 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     try {
       console.time("Tempo de Carga da View");
       
-      let allData: any[] = [];
-      let fetchMore = true;
-      let from = 0;
-      const step = 15000; // Tamanho seguro do lote (5.000 linhas por vez)
-
-      // Loop que busca de 5 em 5 mil até o banco dizer que não tem mais nada
-      while (fetchMore) {
-        const { data, error } = await supabase
-          .from("view_dashboard_completa")
-          .select("*")
-          .not("sku", "is", null) // Força uso de index
-          .range(from, from + step - 1); 
+      const { data, error } = await supabase
+        .from("mview_dashboard_completa") // <-- NOVO NOME AQUI
+        .select("*")
+        .not("sku", "is", null)
+        .limit(15000); 
           
-        if (error) throw error;
+      if (error) throw error;
 
-        if (data && data.length > 0) {
-          allData = [...allData, ...data];
-          from += step;
-          
-          // Se o banco retornou menos que 5000, significa que chegamos na última página
-          if (data.length < step) {
-            fetchMore = false;
-          }
-        } else {
-          // Se retornou vazio, acabou
-          fetchMore = false;
-        }
-      }
-      
-      // Normalização dos dados de TODO o catálogo consolidado
-      const normalizedData = allData.map(item => {
+      // Normalização dos dados
+      const normalizedData = (data || []).map(item => {
         let fornLimpo = item.fornecedor;
         if (fornLimpo) {
           fornLimpo = String(fornLimpo)
