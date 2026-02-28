@@ -1,6 +1,6 @@
 import os
 import requests
-import pd
+import pandas as pd
 from datetime import datetime
 import pytz
 
