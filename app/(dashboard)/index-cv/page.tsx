@@ -403,10 +403,17 @@ export default function IndexCVPage() {
                 <TableRow key={row.sku} className="hover:bg-slate-50 transition-colors">
                   <TableCell>
                     <div className="flex flex-col min-w-[200px] max-w-[350px]">
-                      <span className="font-bold text-xs text-slate-700 break-words whitespace-normal">
+                      <span className="font-bold text-xs text-slate-700 break-words whitespace-normal leading-tight">
                         {row.nome}
                       </span>
-                      <span className="text-[10px] text-slate-400 font-mono mt-0.5">{row.sku}</span>
+                      <div className="flex items-center flex-wrap gap-2 mt-1">
+                        <span className="text-[10px] text-slate-500 font-mono bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">
+                          {row.sku}
+                        </span>
+                        <span className="text-[9px] text-slate-400 uppercase tracking-tight flex items-center gap-1 font-medium">
+                          <Store size={10} className="shrink-0" /> {row.fornecedor || "Sem Fornecedor"}
+                        </span>
+                      </div>
                     </div>
                   </TableCell>
                   

@@ -477,7 +477,8 @@ const table = useReactTable({
     <DashboardHeader />
     <Card className={cn(
       "shadow-xl rounded-xl border-none overflow-hidden flex flex-col transition-all duration-300 bg-white", 
-      isFullscreen ? "fixed inset-0 z-50 m-0 rounded-none h-screen w-screen" : "h-[calc(100vh-180px)] relative"
+      /* Uso de 100dvh para respeitar a área útil do iPad e evitar que o rodapé suma */
+      isFullscreen ? "fixed inset-0 z-50 m-0 rounded-none h-[100dvh] w-screen" : "h-[calc(100vh-180px)] relative"
     )}>
       {/* TOOLBAR SUPERIOR */}
       <div className="flex items-center justify-between px-4 py-2 bg-slate-900 border-b border-slate-700 shrink-0">
@@ -491,7 +492,7 @@ const table = useReactTable({
         </div>
         
         <div className="flex items-center gap-2 bg-slate-800 p-1 rounded-md border border-slate-700 shadow-sm text-white">
-          {/* BOTÕES DE ZOOM AQUI */}
+          {/* BOTÕES DE ZOOM */}
           <Button variant="ghost" size="sm" className="h-6 px-2 text-slate-300 hover:text-white" onClick={() => setZoomLevel((z: number) => Math.max(0.5, z - 0.1))} title="Diminuir Zoom"><ZoomOut size={14}/></Button>
           <span className="text-[10px] font-bold text-slate-300 w-8 text-center select-none">{Math.round(zoomLevel * 100)}%</span>
           <Button variant="ghost" size="sm" className="h-6 px-2 text-slate-300 hover:text-white" onClick={() => setZoomLevel((z: number) => Math.min(2, z + 0.1))} title="Aumentar Zoom"><ZoomIn size={14}/></Button>
@@ -504,33 +505,43 @@ const table = useReactTable({
         </div>
       </div>
 
-      {/* ÁREA DA TABELA COM ZOOM E OVERFLOW ISOLADO (O segredo do iPad) */}
-      <div className="flex-1 overflow-auto bg-white relative">
-        <div style={{ zoom: zoomLevel }}>
-          <Table>
-            <TableHeader className="bg-slate-800 sticky top-0 z-20 shadow-sm">
-              {table.getHeaderGroups().map(headerGroup => (
-                <TableRow key={headerGroup.id}>
-                  {headerGroup.headers.map(header => (
-                    <TableHead key={header.id} className="text-white text-[10px] uppercase font-bold h-10 px-4">
-                      {flexRender(header.column.columnDef.header, header.getContext())}
-                    </TableHead>
-                  ))}
-                </TableRow>
-              ))}
-            </TableHeader>
-            <TableBody>
-              {table.getRowModel().rows.map(row => (
-                <TableRow key={row.id} className={cn(row.original.isParent ? "bg-slate-50/80 font-semibold" : "hover:bg-slate-50 transition-colors")}>
-                  {row.getVisibleCells().map(cell => (
-                    <TableCell key={cell.id} className="py-2 px-4 border-b border-slate-100 text-xs text-slate-700">
-                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                    </TableCell>
-                  ))}
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+      {/* ÁREA DA TABELA COM ZOOM E CABEÇALHO FIXO CORRIGIDO */}
+      <div className="flex-1 overflow-hidden relative bg-white border-t border-slate-200">
+        <div 
+          className="absolute top-0 left-0 origin-top-left flex flex-col" 
+          style={{ 
+            transform: `scale(${zoomLevel})`, 
+            width: `${(1 / zoomLevel) * 100}%`, 
+            height: `${(1 / zoomLevel) * 100}%` 
+          }}
+        >
+          {/* CONTAINER DO SCROLL (Aqui o sticky volta a funcionar) */}
+          <div className="flex-1 overflow-auto relative">
+            <table className="w-full text-left border-collapse">
+              <thead className="sticky top-0 z-40 shadow-md">
+                {table.getHeaderGroups().map(headerGroup => (
+                  <tr key={headerGroup.id} className="border-none">
+                    {headerGroup.headers.map(header => (
+                      <th key={header.id} className="text-white text-[10px] uppercase font-bold h-10 px-4 bg-slate-800 border-b border-slate-700">
+                        {flexRender(header.column.columnDef.header, header.getContext())}
+                      </th>
+                    ))}
+                  </tr>
+                ))}
+              </thead>
+              <tbody>
+                {table.getRowModel().rows.map(row => (
+                  <tr key={row.id} className={cn(row.original.isParent ? "bg-slate-50/80 font-semibold" : "hover:bg-slate-50 transition-colors")}>
+                    {row.getVisibleCells().map(cell => (
+                      <td key={cell.id} className="py-2 px-4 border-b border-slate-100 text-xs text-slate-700">
+                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
 
@@ -543,7 +554,7 @@ const table = useReactTable({
         </div>
       </div>
 
-      {/* --- NOVO: MODAL DE HISTÓRICO DE PREÇOS (COLE ISSO ANTES DA DIV FINAL) --- */}
+      {/* MODAL DE HISTÓRICO DE PREÇOS */}
       <Dialog open={historyModal.isOpen} onOpenChange={(v) => setHistoryModal(prev => ({...prev, isOpen: v}))}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
