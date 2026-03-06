@@ -76,12 +76,30 @@ def processar_loja(config):
                 if nf_resumo.get('naturezaOperacao', {}).get('id') in config['naturezas_ignorar']: continue
 
                 try:
-                    time.sleep(0.05) 
+                    # --- NOVO: MECANISMO DE RETRY PARA ERRO 429 ---
+                    max_retries = 3
+                    sucesso = False
                     url_det = f"https://www.bling.com.br/Api/v3/nfe/{nf_resumo['id']}"
-                    token = service.get_valid_token()
-                    resp = requests.get(url_det, headers={"Authorization": f"Bearer {token}"})
+                    
+                    for tentativa in range(max_retries):
+                        time.sleep(0.35)
+                        token = service.get_valid_token()
+                        resp = requests.get(url_det, headers={"Authorization": f"Bearer {token}"})
+                        
+                        if resp.status_code == 200:
+                            sucesso = True
+                            break
+                        elif resp.status_code == 429:
+                            espera = 2 ** tentativa
+                            print(f"   ⏳ Rate Limit (429) na NF {nf_resumo['id']}. Aguardando {espera}s para retentar...")
+                            time.sleep(espera)
+                        else:
+                            break
+                            
+                    if not sucesso:
+                        print(f"   ❌ NFe {nf_resumo['id']} ignorada após tentativas falhas.")
+                        continue
 
-                    if resp.status_code != 200: continue
                     nf = resp.json().get('data')
                     if not nf: continue
                     

@@ -127,6 +127,21 @@ Deno.serve(async (req) => {
         }
     };
 
+    // FUNÇÃO AUXILIAR: Fetch com Retry Exponencial Anti-429
+    const fetchWithRetry = async (url: string, maxRetries = 3) => {
+        for (let i = 0; i < maxRetries; i++) {
+            const res = await fetch(url, { headers: { "Authorization": `Bearer ${token}` } });
+            if (res.status === 429) {
+                console.log(`⏳ Rate Limit 429 em ${url}. Aguardando para retentar...`);
+                // Espera 1s na primeira, 2s na segunda... (Evita estourar o limite de tempo da Edge Function)
+                await new Promise(r => setTimeout(r, (i + 1) * 1000));
+            } else {
+                return res; // Retorna imediatamente se for 200 (OK) ou outro erro definitivo
+            }
+        }
+        return await fetch(url, { headers: { "Authorization": `Bearer ${token}` } }); // Última tentativa kamikaze
+    };
+
     // --- ROTEAMENTO ---
 
     // A) ESTOQUE
@@ -144,7 +159,7 @@ Deno.serve(async (req) => {
 
     // B) PEDIDOS DE VENDA
     else if (event.includes('order.') || event.includes('sales.')) {
-      const resp = await fetch(`https://www.bling.com.br/Api/v3/pedidos/vendas/${idBling}`, { headers: { "Authorization": `Bearer ${token}` } });
+      const resp = await fetchWithRetry(`https://www.bling.com.br/Api/v3/pedidos/vendas/${idBling}`);
       if (resp.ok) {
         const { data: v } = await resp.json();
         let origem = (nomeLoja === 'PORTFIO' && v.situacao?.id === ID_SIT_FULL) ? "SITE_FULL" : 
@@ -193,7 +208,7 @@ Deno.serve(async (req) => {
 
     // C) NOTAS FISCAIS (VENDAS E DEVOLUÇÕES)
     else if (event.includes('invoice.') || event.includes('nfe.')) {
-      const resp = await fetch(`https://www.bling.com.br/Api/v3/nfe/${idBling}`, { headers: { "Authorization": `Bearer ${token}` } });
+      const resp = await fetchWithRetry(`https://www.bling.com.br/Api/v3/nfe/${idBling}`);
       if (resp.ok) {
         const { data: nf } = await resp.json();
         const natId = nf.naturezaOperacao?.id;
@@ -377,9 +392,7 @@ Deno.serve(async (req) => {
 
     // D) PRODUTOS E COMPOSIÇÕES
     else if (event.includes('product.')) {
-      const respBling = await fetch(`https://www.bling.com.br/Api/v3/produtos/${idBling}`, { 
-        headers: { "Authorization": `Bearer ${token}` } 
-      });
+      const respBling = await fetchWithRetry(`https://www.bling.com.br/Api/v3/produtos/${idBling}`);
 
       if (respBling.ok) {
         const { data: p } = await respBling.json();

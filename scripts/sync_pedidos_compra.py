@@ -80,12 +80,28 @@ def processar_loja(loja_nome):
                     continue
 
                 try:
-                    time.sleep(0.05)
-                    token = service.get_valid_token()
-                    resp = requests.get(f"https://www.bling.com.br/Api/v3/pedidos/compras/{id_pedido}", headers={"Authorization": f"Bearer {token}"})
+                    # --- NOVO: MECANISMO DE RETRY PARA ERRO 429 ---
+                    max_retries = 3
+                    sucesso = False
                     
-                    if resp.status_code != 200: 
-                        print(f"   ⚠️ Erro ao baixar pedido {id_pedido}: {resp.status_code}")
+                    for tentativa in range(max_retries):
+                        time.sleep(0.35) # Aumentado um pouco o descanso padrão
+                        token = service.get_valid_token()
+                        resp = requests.get(f"https://www.bling.com.br/Api/v3/pedidos/compras/{id_pedido}", headers={"Authorization": f"Bearer {token}"})
+                        
+                        if resp.status_code == 200:
+                            sucesso = True
+                            break
+                        elif resp.status_code == 429:
+                            espera = 2 ** tentativa # Espera 1s, depois 2s, depois 4s...
+                            print(f"   ⏳ Rate Limit (429) no pedido {id_pedido}. Aguardando {espera}s para retentar (Tentativa {tentativa+1}/{max_retries})...")
+                            time.sleep(espera)
+                        else:
+                            print(f"   ⚠️ Erro crítico ao baixar pedido {id_pedido}: {resp.status_code}")
+                            break # Sai do loop se não for 429
+                            
+                    if not sucesso:
+                        print(f"   ❌ Pedido {id_pedido} ignorado após {max_retries} tentativas falhas.")
                         continue
                         
                     p = resp.json().get('data')
