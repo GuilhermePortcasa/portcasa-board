@@ -17,19 +17,53 @@ def processar_diario():
     tz = pytz.timezone('America/Sao_Paulo')
     hoje_br = datetime.now(tz).strftime("%Y-%m-%d")
     
-    # 1. MODIFICADO: Puxa os dados instantâneos da MATERIALIZED VIEW (mview_)
-    url_est = f"{SUPABASE_URL}/rest/v1/mview_dashboard_completa?select=est_loja,est_site,est_full,custo_final,tipo"
-    r_est = requests.get(url_est, headers=HEADERS).json()
-    df_est = pd.DataFrame(r_est)
+    print("⏳ Puxando dados da View Materializada...")
     
-    if df_est.empty: return
+    # 1. Puxamos TODOS os dados necessários para aplicar as regras de negócio
+    url_est = f"{SUPABASE_URL}/rest/v1/mview_dashboard_completa?select=sku,tipo,custo_final,est_total,est_loja,est_site,est_full,v_qtd_120d_geral,qtd_andamento"
+    
+    # Busca com paginação para garantir que vem a base inteira (caso passe de 1000 que é o limite padrão do postgrest)
+    all_data = []
+    offset = 0
+    limit = 5000
+    while True:
+        r = requests.get(f"{url_est}&offset={offset}&limit={limit}", headers=HEADERS)
+        if r.status_code != 200:
+            print(f"❌ Erro ao buscar dados: {r.text}")
+            return
+        
+        lote = r.json()
+        if not lote:
+            break
+            
+        all_data.extend(lote)
+        offset += limit
 
-    # 2. APLICAMOS A TRAVA DE KIT (Igual ao React)
-    df_est = df_est[df_est['tipo'] != 'E'].copy()
+    df = pd.DataFrame(all_data)
+    if df.empty: 
+        print("⚠️ Tabela vazia.")
+        return
 
-    # 3. Fazemos os cálculos
-    total_est_loja = (df_est['est_loja'] * df_est['custo_final']).sum()
-    total_est_site = ((df_est['est_site'] + df_est['est_full']) * df_est['custo_final']).sum()
+    # Converte tudo para numérico garantindo que nulos sejam 0
+    cols_numericas = ['custo_final', 'est_total', 'est_loja', 'est_site', 'est_full', 'v_qtd_120d_geral', 'qtd_andamento']
+    for col in cols_numericas:
+        df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+
+    # 2. APLICAMOS A TRAVA DE KIT (Igual ao React: if p.tipo !== 'E')
+    df = df[df['tipo'] != 'E'].copy()
+
+    # 3. APLICAMOS O FILTRO DE PRODUTOS INATIVOS (A mesma lógica do isProductInCanal do React)
+    # No dashboard geral, ele só processa se: est_total > 0 OR v_qtd_120d_geral > 0 OR qtd_andamento > 0
+    filtro_ativo = (df['est_total'] > 0) | (df['v_qtd_120d_geral'] > 0) | (df['qtd_andamento'] > 0)
+    df = df[filtro_ativo]
+
+    # 4. Fazemos os cálculos FINAIS DE VALOR
+    # Como já filtramos, agora é só multiplicar a quantidade física atual pelo custo final unitário
+    total_est_loja = (df['est_loja'] * df['custo_final']).sum()
+    
+    # O site soma o físico do site mais o físico do full
+    df['estoque_site_total'] = df['est_site'] + df['est_full']
+    total_est_site = (df['estoque_site_total'] * df['custo_final']).sum()
 
     payload = {
         "data": hoje_br,
@@ -37,8 +71,14 @@ def processar_diario():
         "estoque_site": float(total_est_site)
     }
 
-    requests.post(f"{SUPABASE_URL}/rest/v1/historico_resumo", headers=HEADERS, json=payload)
-    print(f"📊 Estoque do dia {hoje_br} registrado (Kits ignorados para evitar duplicidade).")
+    print(f"💰 Loja calculada: R$ {total_est_loja:,.2f}")
+    print(f"💰 Site calculado: R$ {total_est_site:,.2f}")
+
+    r_post = requests.post(f"{SUPABASE_URL}/rest/v1/historico_resumo", headers=HEADERS, json=payload)
+    if r_post.status_code in [200, 201, 204]:
+        print(f"✅ Estoque do dia {hoje_br} registrado com sucesso (Sincronizado com regras do Dashboard).")
+    else:
+        print(f"❌ Erro ao salvar histórico: {r_post.text}")
 
 if __name__ == "__main__":
     processar_diario()
