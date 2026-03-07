@@ -25,7 +25,7 @@ def processar_diario():
     # Busca com paginação para garantir que vem a base inteira (caso passe de 1000 que é o limite padrão do postgrest)
     all_data = []
     offset = 0
-    limit = 5000
+    limit = 50000
     while True:
         r = requests.get(f"{url_est}&offset={offset}&limit={limit}", headers=HEADERS)
         if r.status_code != 200:
