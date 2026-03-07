@@ -25,7 +25,7 @@ def processar_diario():
     # Busca com paginação para garantir que vem a base inteira (caso passe de 1000 que é o limite padrão do postgrest)
     all_data = []
     offset = 0
-    limit = 50000
+    limit = 5000
     while True:
         r = requests.get(f"{url_est}&offset={offset}&limit={limit}", headers=HEADERS)
         if r.status_code != 200:
@@ -57,8 +57,13 @@ def processar_diario():
     filtro_ativo = (df['est_total'] > 0) | (df['v_qtd_120d_geral'] > 0) | (df['qtd_andamento'] > 0)
     df = df[filtro_ativo]
 
+    # --- NOVIDADE: TRAVA CONTRA ESTOQUE NEGATIVO (Igual ao Math.max(0, val) do React) ---
+    # Substitui qualquer valor menor que 0 por 0 nas colunas de estoque
+    df['est_loja'] = df['est_loja'].clip(lower=0)
+    df['est_site'] = df['est_site'].clip(lower=0)
+    df['est_full'] = df['est_full'].clip(lower=0)
+
     # 4. Fazemos os cálculos FINAIS DE VALOR
-    # Como já filtramos, agora é só multiplicar a quantidade física atual pelo custo final unitário
     total_est_loja = (df['est_loja'] * df['custo_final']).sum()
     
     # O site soma o físico do site mais o físico do full
