@@ -100,9 +100,16 @@ export default function EstoquePage() {
         return item;
       };
 
-      dataToExport.push(processItem(parent, true));
-      if (parent.children) {
-        parent.children.forEach((child: any) => dataToExport.push(processItem(child, false)));
+      // CORREÇÃO: Verifica se o produto tem variações reais (hasVariations).
+      // Se ele NÃO TEM variações, nós tratamos ele diretamente como "Filho" e não criamos a linha de cabeçalho vazia.
+      if (!parent.hasVariations && parent.children && parent.children.length > 0) {
+        dataToExport.push(processItem(parent.children[0], false));
+      } else {
+        // Se ele TEM variações, colocamos a linha Pai (com totais ou zerada) e depois listamos as variações.
+        dataToExport.push(processItem(parent, true));
+        if (parent.children) {
+          parent.children.forEach((child: any) => dataToExport.push(processItem(child, false)));
+        }
       }
     });
 
