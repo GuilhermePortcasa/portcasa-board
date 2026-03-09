@@ -53,17 +53,12 @@ def processar_diario():
     df = df[df['tipo'] != 'E'].copy()
 
     # 3. APLICAMOS O FILTRO DE PRODUTOS INATIVOS (A mesma lógica do isProductInCanal do React)
-    # No dashboard geral, ele só processa se: est_total > 0 OR v_qtd_120d_geral > 0 OR qtd_andamento > 0
-    filtro_ativo = (df['est_total'] > 0) | (df['v_qtd_120d_geral'] > 0) | (df['qtd_andamento'] > 0)
+    # No dashboard geral, ele só processa se: est_total != 0 OR v_qtd_120d_geral > 0 OR qtd_andamento > 0
+    filtro_ativo = (df['est_total'] != 0) | (df['v_qtd_120d_geral'] > 0) | (df['qtd_andamento'] > 0)
     df = df[filtro_ativo]
 
-    # --- NOVIDADE: TRAVA CONTRA ESTOQUE NEGATIVO (Igual ao Math.max(0, val) do React) ---
-    # Substitui qualquer valor menor que 0 por 0 nas colunas de estoque
-    df['est_loja'] = df['est_loja'].clip(lower=0)
-    df['est_site'] = df['est_site'].clip(lower=0)
-    df['est_full'] = df['est_full'].clip(lower=0)
-
     # 4. Fazemos os cálculos FINAIS DE VALOR
+    # Como já filtramos, agora é só multiplicar a quantidade física atual pelo custo final unitário
     total_est_loja = (df['est_loja'] * df['custo_final']).sum()
     
     # O site soma o físico do site mais o físico do full

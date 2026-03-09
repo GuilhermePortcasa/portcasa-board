@@ -1,0 +1,31 @@
+name: 📦 Sync Estoque Semanal
+
+on:
+  schedule:
+    # Roda todo Domingo às 04:00 da manhã (Horário UTC = 01:00 no Brasil)
+    - cron: '0 4 * * 0'
+  workflow_dispatch: # Permite rodar manualmente clicando no botão no GitHub
+
+jobs:
+  sincronizar_estoque:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Configurar Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Instalar Dependências
+        run: pip install requests
+
+      - name: Rodar Sync de Estoque
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          BLING_CLIENT_ID_PORTFIO: ${{ secrets.BLING_CLIENT_ID_PORTFIO }}
+          BLING_SECRET_PORTFIO: ${{ secrets.BLING_SECRET_PORTFIO }}
+          BLING_CLIENT_ID_PORTCASA: ${{ secrets.BLING_CLIENT_ID_PORTCASA }}
+          BLING_SECRET_PORTCASA: ${{ secrets.BLING_SECRET_PORTCASA }}
+        run: python scripts/sync_estoque.py

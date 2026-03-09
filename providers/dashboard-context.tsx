@@ -113,12 +113,12 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   // --- FUNÇÃO AUXILIAR: Verifica se o produto pertence ao canal ativo ---
   const isProductInCanal = useCallback((p: any, c: string) => {
     if (c === "loja") {
-        return p.est_loja > 0 || (p.v_qtd_120d_geral > 0 && p.v_qtd_90d_loja > 0) || p.qtd_andamento_loja > 0;
+        return p.est_loja !== 0 || (p.v_qtd_120d_geral > 0 && p.v_qtd_90d_loja > 0) || p.qtd_andamento_loja > 0;
     }
     if (c === "site") {
-        return (p.est_site + p.est_full) > 0 || (p.v_qtd_120d_geral > 0 && p.v_qtd_90d_site > 0) || p.qtd_andamento_site > 0;
+        return (p.est_site + p.est_full) !== 0 || (p.v_qtd_120d_geral > 0 && p.v_qtd_90d_site > 0) || p.qtd_andamento_site > 0;
     }
-    return p.est_total > 0 || p.v_qtd_120d_geral > 0 || p.qtd_andamento > 0;
+    return p.est_total !== 0 || p.v_qtd_120d_geral > 0 || p.qtd_andamento > 0;
   }, []);
 
   // 1. FORNECEDORES DINÂMICOS (Filtra por Canal e Categoria)
@@ -193,10 +193,10 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
                 const custo = safeNum(p.custo_final);
                 const pedItem = safeNum(canal === 'loja' ? p.qtd_andamento_loja : canal === 'site' ? p.qtd_andamento_site : p.qtd_andamento);
 
-                const estSite = Math.max(0, safeNum(p.est_site));
-                const estFull = Math.max(0, safeNum(p.est_full));
-                const estLoja = Math.max(0, safeNum(p.est_loja));
-                const estTotal = Math.max(0, safeNum(p.est_total));
+                const estSite = safeNum(p.est_site);
+                const estFull = safeNum(p.est_full);
+                const estLoja = safeNum(p.est_loja);
+                const estTotal = safeNum(p.est_total);
 
                 const valSite = estSite * custo;
                 const valFull = estFull * custo;
