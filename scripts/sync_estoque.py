@@ -29,7 +29,8 @@ def obter_produtos_ativos():
     limit = 5000
     
     while True:
-        url = f"{SUPABASE_URL}/rest/v1/produtos?select=sku,id_bling_portfio,id_bling_portcasa,tipo,formato&limit={limit}&offset={offset}"
+        # Alterado de 'tipo' para 'formato' no select
+        url = f"{SUPABASE_URL}/rest/v1/produtos?select=sku,id_bling_portfio,id_bling_portcasa,formato&limit={limit}&offset={offset}"
         r = requests.get(url, headers=HEADERS)
         if r.status_code != 200:
             print(f"❌ Erro ao buscar produtos: {r.text}")
@@ -39,16 +40,17 @@ def obter_produtos_ativos():
         if not lote:
             break
             
-        # IGNORA KITS/COMPOSIÇÕES (TIPO OU FORMATO 'E')
+        # IGNORA KITS/COMPOSIÇÕES (FORMATO 'E' = Estrutura no Bling)
         for p in lote:
-            if p.get('tipo') != 'E' and p.get('formato') != 'E':
+            formato = str(p.get('formato')).upper() if p.get('formato') else 'S'
+            if formato != 'E':
                 produtos.append(p)
                 
         offset += limit
         
     print(f"✅ {len(produtos)} produtos válidos (sem composições) encontrados.")
     return produtos
-
+    
 def salvar_estoque(lote):
     if not lote: return
     url = f"{SUPABASE_URL}/rest/v1/estoque"

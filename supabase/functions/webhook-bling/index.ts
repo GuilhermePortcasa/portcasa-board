@@ -150,8 +150,9 @@ Deno.serve(async (req) => {
       const canal = DEPOSITOS[String(depInfo?.id)];
       if (canal) {
         const colId = `id_bling_${nomeLoja.toLowerCase().replace('_', '')}`;
-        const { data: prod } = await supabase.from('produtos').select('sku,tipo').eq(colId, idBling).single();
-        if (prod && prod.tipo !== 'E') {
+        // Correção: Puxar 'formato' e validar 'formato !== E'
+        const { data: prod } = await supabase.from('produtos').select('sku,formato').eq(colId, idBling).single();
+        if (prod && prod.formato !== 'E') {
           await supabase.from('estoque').upsert({ sku: prod.sku, canal: canal, quantidade: depInfo.saldoFisico, updated_at: new Date().toISOString() }, { onConflict: 'sku,canal' });
         }
       }
