@@ -63,55 +63,79 @@ export default function EstoquePage() {
   };
 
   // --- EXPORTAÇÃO XLSX ---
-  // (Mantém a lógica de exportação, mas usando processedData que já vem pronto)
   const exportToExcel = () => {
     const isSite = canal === 'site';
     const dataToExport: any[] = [];
 
+    // Função auxiliar para verificar se a linha tem dados relevantes para o Excel
+    const temDadosAtivos = (row: any) => {
+      const est = isSite ? (row.est_site + row.est_full) : (row.est_lo_total || row.est_loja);
+      const ped = isSite ? row.qtd_andamento_site : row.qtd_andamento_loja;
+      const v30 = isSite ? row.v_qtd_30d_site : row.v_qtd_30d_loja;
+      const v60 = isSite ? row.v_qtd_60d_site : row.v_qtd_60d_loja;
+      const v90 = isSite ? row.v_qtd_90d_site : row.v_qtd_90d_loja;
+      return est !== 0 || ped > 0 || v30 > 0 || v60 > 0 || v90 > 0;
+    };
+
     processedData.forEach((parent: any) => {
-      const processItem = (row: any, isParentRow: boolean) => {
+      const processItem = (row: any) => {
+        // Se a linha for zerada em tudo, ignora (retorna null)
+        if (!temDadosAtivos(row)) return null;
+
         const precoVenda = isSite ? (row.ultimo_preco_site || row.preco_venda_padrao) : row.preco_venda_padrao;
         const markup = row.custo_final > 0 ? ((precoVenda - row.custo_final) / row.custo_final) : 0;
         
-        // 1. Colunas Iniciais (Fixas até o índice 5)
+        // 1. Colunas Iniciais
         const item: any = {
           "SKU": row.sku,
           "nome": row.nome,
           "venda": Number(precoVenda || 0), 
           "custo médio": Number(row.custo_final || 0),
           "Markup (em %)": Number(markup || 0),
-          "estoque": isParentRow ? 0 : Number(isSite ? (row.est_site + row.est_full) : row.est_lo_total || row.est_loja),
+          "estoque": Number(isSite ? (row.est_site + row.est_full) : (row.est_lo_total || row.est_loja)),
         };
 
-        // 2. Coluna Condicional (Índice 6 se for Site)
+        // 2. Coluna Condicional
         if (isSite) {
-          item["estoque full"] = isParentRow ? 0 : Number(row.est_full || 0);
+          item["estoque full"] = Number(row.est_full || 0);
         }
 
-        // 3. Colunas Finais (Os índices aqui mudam, mas as chaves do objeto garantem a ordem)
-        item["pedidos"] = isParentRow ? 0 : Number(isSite ? row.qtd_andamento_site : row.qtd_andamento_loja);
-        item["vendas 30"] = isParentRow ? 0 : Number(isSite ? row.v_qtd_30d_site : row.v_qtd_30d_loja);
-        item["vendas 60"] = isParentRow ? 0 : Number(isSite ? row.v_qtd_60d_site : row.v_qtd_60d_loja);
-        item["vendas 90"] = isParentRow ? 0 : Number(isSite ? row.v_qtd_90d_site : row.v_qtd_90d_loja);
-        item["Fornecedor"] = row.fornecedor;
+        // 3. Colunas Finais
+        item["pedidos"] = Number(isSite ? row.qtd_andamento_site : row.qtd_andamento_loja);
+        item["vendas 30"] = Number(isSite ? row.v_qtd_30d_site : row.v_qtd_30d_loja);
+        item["vendas 60"] = Number(isSite ? row.v_qtd_60d_site : row.v_qtd_60d_loja);
+        item["vendas 90"] = Number(isSite ? row.v_qtd_90d_site : row.v_qtd_90d_loja);
+        item["Fornecedor"] = row.fornecedor || "";
         item["GTIN"] = row.gtin || "";
         item["GTIN Embalagem (GTIN2)"] = row.gtin_embalagem || "";
 
         return item;
       };
 
-      // CORREÇÃO: Verifica se o produto tem variações reais (hasVariations).
-      // Se ele NÃO TEM variações, nós tratamos ele diretamente como "Filho" e não criamos a linha de cabeçalho vazia.
-      if (!parent.hasVariations && parent.children && parent.children.length > 0) {
-        dataToExport.push(processItem(parent.children[0], false));
-      } else {
-        // Se ele TEM variações, colocamos a linha Pai (com totais ou zerada) e depois listamos as variações.
-        dataToExport.push(processItem(parent, true));
+      // LÓGICA DE DUPLICAÇÃO RESOLVIDA:
+      // Se NÃO tem variações de verdade (é um produto simples disfarçado de pai)
+      if (!parent.hasVariations) {
+        // Pega o primeiro filho (que é o produto real com os dados)
+        if (parent.children && parent.children.length > 0) {
+           const rowExcel = processItem(parent.children[0]);
+           if (rowExcel) dataToExport.push(rowExcel);
+        }
+      } 
+      // Se TEM variações reais, exporta apenas as variações (os filhos), ignorando a linha do agrupador Pai
+      else {
         if (parent.children) {
-          parent.children.forEach((child: any) => dataToExport.push(processItem(child, false)));
+          parent.children.forEach((child: any) => {
+            const rowExcel = processItem(child);
+            if (rowExcel) dataToExport.push(rowExcel);
+          });
         }
       }
     });
+
+    if (dataToExport.length === 0) {
+      alert("Não há dados ativos para exportar.");
+      return;
+    }
 
     const worksheet = XLSX.utils.json_to_sheet(dataToExport);
 
@@ -162,7 +186,7 @@ export default function EstoquePage() {
     XLSX.utils.book_append_sheet(workbook, worksheet, "Estoque");
     XLSX.writeFile(workbook, nomeArquivo);
   };
-
+  
   // Auto-expandir ao pesquisar
   useEffect(() => {
     if (search.length > 0) {

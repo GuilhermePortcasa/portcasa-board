@@ -87,24 +87,34 @@ def processar_conta_bling(nome_loja, map_id_sku):
             
             if r.status_code == 200:
                 saldos = r.json().get('data', [])
+                
+                # 1. Indexa o que o Bling retornou (Caso o ID exista e tenha depósitos)
+                estoques_retornados = {}
                 for s in saldos:
                     id_retornado = s.get('produto', {}).get('id')
-                    sku = map_id_sku.get(id_retornado)
+                    # Cria um dicionário interno mapeando: {id_deposito: quantidade}
+                    estoques_retornados[id_retornado] = { dep.get('id'): dep.get('saldoFisico', 0) for dep in s.get('depositos', []) }
+                
+                # 2. Varre TODOS os IDs que pedimos neste lote (A mágica de zerar os perdidos)
+                for id_req in lote_ids:
+                    sku = map_id_sku.get(id_req)
                     if not sku: continue
                     
-                    depositos_bling = s.get('depositos', [])
-                    for dep in depositos_bling:
-                        id_dep = dep.get('id')
-                        # Só salva se for um dos nossos depósitos rastreados
-                        if id_dep in DEPOSITOS:
-                            canal = DEPOSITOS[id_dep]
-                            qtd = dep.get('saldoFisico', 0)
-                            buffer_estoque.append({
-                                "sku": sku,
-                                "canal": canal,
-                                "quantidade": qtd,
-                                "updated_at": datetime.now().isoformat()
-                            })
+                    # Tenta pegar os depósitos que vieram do Bling para este ID. Se o ID sumiu da resposta, retorna {}
+                    depositos_do_item = estoques_retornados.get(id_req, {})
+                    
+                    # Garante que as 3 linhas de estoque (LOJA, SITE e FULL) sejam enviadas ao Supabase
+                    for id_dep_monitorado, nome_canal in DEPOSITOS.items():
+                        # Se o depósito não veio no JSON (ou se o produto todo sumiu), a quantidade assume 0
+                        qtd_final = depositos_do_item.get(id_dep_monitorado, 0)
+                        
+                        buffer_estoque.append({
+                            "sku": sku,
+                            "canal": nome_canal,
+                            "quantidade": qtd_final,
+                            "updated_at": datetime.now().isoformat()
+                        })
+                        
                 sucesso = True
                 break
             elif r.status_code == 429:

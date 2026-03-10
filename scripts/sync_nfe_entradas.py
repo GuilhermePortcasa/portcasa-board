@@ -132,9 +132,29 @@ def processar_loja(config):
                         
                         frete_unitario = ((val_frete_total + val_outras_total) * peso_item) / qtd
                         
-                        total_ipi_item = float(item.get('impostos', {}).get('ipi', {}).get('valor', 0) or 0)
-                        ipi_unitario = total_ipi_item / qtd
+                        # --- CORREÇÃO: EXTRAÇÃO BLINDADA DO IPI ---
+                        total_ipi_item = 0.0
+                        impostos = item.get('impostos')
                         
+                        # 1. Tenta buscar no padrão principal (impostos -> ipi -> valor)
+                        if isinstance(impostos, dict):
+                            ipi_obj = impostos.get('ipi')
+                            if isinstance(ipi_obj, dict):
+                                total_ipi_item = float(ipi_obj.get('valor') or 0)
+                            elif isinstance(ipi_obj, (int, float)):
+                                total_ipi_item = float(ipi_obj)
+                                
+                        # 2. Fallback: Se não achou, tenta buscar solto na raiz do item (comum em NFs de XML)
+                        if total_ipi_item == 0:
+                            ipi_alt = item.get('valorIPI') or item.get('ipi')
+                            if isinstance(ipi_alt, dict):
+                                total_ipi_item = float(ipi_alt.get('valor') or 0)
+                            elif isinstance(ipi_alt, (int, float)):
+                                total_ipi_item = float(ipi_alt)
+
+                        ipi_unitario = total_ipi_item / qtd
+                        # ------------------------------------------
+
                         desc_item_unitario = float(item.get('desconto', 0) or 0)
                         
                         chave_unica = (nf['id'], sku)
