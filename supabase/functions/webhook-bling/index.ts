@@ -333,60 +333,10 @@ Deno.serve(async (req) => {
             await supabase.from('devolucoes').delete().eq('id', idBling);
           }
         }
-        // --- ROTA 3: COMPRA (Entrada Tipo 0) ---
-        else if (nf.tipo === 0 && !IDS_NATUREZA_DEVOLUCAO.includes(natId)) {
-            const nomeFornecedor = nf.contato?.nome?.toUpperCase() || "";
-            const ehFornecedorBloqueado = BLACKLIST_FORNECEDORES.some(f => nomeFornecedor.includes(f.toUpperCase()));
-            const ehNaturezaBloqueada = IDS_NATUREZA_IGNORAR_COMPRA.includes(natId);
-            const ehLojaCompraValida = nf.loja?.id === 0; 
-
-            if (!ehFornecedorBloqueado && !ehNaturezaBloqueada && ehLojaCompraValida && eSituacaoValidaPadrao) {
-                const itens = nf.itens || [];
-                
-                // Valores para Rateio
-                const valFreteTotal = nf.valorFrete || 0;
-                const valOutrasTotal = nf.outrasDespesas || 0;
-                const totalRateioHeader = valFreteTotal + valOutrasTotal;
-
-                let somaProdutos = itens.reduce((acc, i) => acc + ((i.valor || 0) * i.quantidade), 0);
-                if (somaProdutos === 0) somaProdutos = 1;
-
-                for (const item of itens) {
-                    if (!item.codigo || item.codigo.trim() === "") continue;
-
-                    const qtd = item.quantidade;
-                    const valorBrutoUnit = item.valor || item.valorUnitario || 0;
-                    const pesoItem = (valorBrutoUnit * qtd) / somaProdutos;
-
-                    // Cálculo de componentes
-                    const freteRateadoUnit = (totalRateioHeader * pesoItem) / qtd;
-                    const ipiUnit = (item.impostos?.ipi?.valor || 0) / qtd;
-                    const descUnit = item.desconto || 0;
-
-                    await supabase.from('entradas_compras').upsert({
-                        id_bling: idBling,
-                        sku: item.codigo,
-                        data_entrada: nf.dataEmissao.substring(0, 10),
-                        quantidade: qtd,
-                        custo_unitario: valorBrutoUnit,
-                        desconto: descUnit,
-                        frete: freteRateadoUnit,
-                        ipi: ipiUnit,
-                        nfe: String(nf.numero),
-                        fornecedor: nf.contato?.nome,
-                        loja: nomeLoja
-                    }, { onConflict: 'id_bling,sku' });
-                }
-                console.log(`✅ Compra ${nf.numero} calculada e processada.`);
-            } else {
-                await supabase.from('entradas_compras').delete().eq('id_bling', idBling);
-            }
-        }
         else {
           // Limpeza geral (Canceladas, Denegadas, etc em qualquer tipo de nota)
           await supabase.from('nfe_saida').delete().eq('id', idBling);
           await supabase.from('devolucoes').delete().eq('id', idBling);
-          await supabase.from('entradas_compras').delete().eq('id_bling', idBling); // Adicionado para compras
         }
       }
     }
