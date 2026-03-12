@@ -125,7 +125,8 @@ export default function VisaoGeralPage() {
     rawData.forEach(item => {
       const receita = Number(item.rec_30d_site || 0) + Number(item.rec_30d_loja || 0);
       if (receita > 0) {
-        const cat = item.categoria || "Outros";
+        // Usa a NOVA coluna "categoria_raiz" para agrupar as macros no gráfico!
+        const cat = item.categoria_raiz || "Outros"; 
         catMap[cat] = (catMap[cat] || 0) + receita;
       }
     });

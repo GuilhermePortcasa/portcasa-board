@@ -36,20 +36,20 @@ function VendasContent() {
   const [searchTerm, setSearchTerm] = useState(initialSearch);
   const [sortConfig, setSortConfig] = useState<{ key: string, direction: 'asc' | 'desc' }>({ key: 'lucro', direction: 'desc' });
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
+  
+  // FILTROS: Fornecedor e Categoria (Adicionado)
   const [filterForn, setFilterForn] = useState("all");
+  const [filterCat, setFilterCat] = useState("all");
 
   const [activePreset, setActivePreset] = useState<string>(initialSearch ? "tudo" : "30d");
   
-// Estados de Data
   const [date, setDate] = useState<DateRange | undefined>(
     initialSearch ? undefined : { from: subDays(new Date(), 30), to: new Date() }
   );
   
-  // NOVO: Estados para controlar o Calendário e a seleção temporária
   const [isCalendarOpen, setIsCalendarOpen] = useState(false);
   const [tempDate, setTempDate] = useState<DateRange | undefined>(date);
 
-  // Sincroniza a data temporária quando abre o popover
   useEffect(() => {
     if (isCalendarOpen) setTempDate(date);
   }, [isCalendarOpen, date]);
@@ -104,12 +104,53 @@ function VendasContent() {
     applyDateFilter({ from: yesterday, to: yesterday });
   };
 
+// LISTAS DINÂMICAS E CRUZADAS: Fornecedores e Categorias
   const suppliers = useMemo(() => {
     if (!salesData) return [];
-    const list = salesData.map(v => v.fornecedor ? v.fornecedor.trim() : null).filter(Boolean);
-    return Array.from(new Set(list)).sort();
-  }, [salesData]);
+    // Pega todos os dados e já aplica o filtro de categoria e os filtros de canal
+    let base = salesData;
+    
+    // Se tiver uma categoria selecionada, o select de fornecedor só mostra quem vende essa categoria
+    if (filterCat !== "all") {
+        base = base.filter(v => v.categoria === filterCat);
+    }
+    
+    // Filtro de canal macro para não mostrar fornecedor de loja no site, etc.
+    if (canalAtivo === "loja") base = base.filter(v => v.canal_macro === "LOJA");
+    else if (canalAtivo === "site") base = base.filter(v => v.canal_macro === "SITE");
 
+    const list = base.map(v => v.fornecedor ? v.fornecedor.trim() : null).filter(Boolean);
+    return Array.from(new Set(list)).sort();
+  }, [salesData, filterCat, canalAtivo]); // Reage ao filterCat
+
+  const categories = useMemo(() => {
+    if (!salesData) return [];
+    
+    let base = salesData;
+
+    // Se tiver um fornecedor selecionado, o select de categoria só mostra o que esse fornecedor vende
+    if (filterForn !== "all") {
+        base = base.filter(v => v.fornecedor === filterForn);
+    }
+
+    // Filtro de canal macro para alinhar com o menu ativo
+    if (canalAtivo === "loja") base = base.filter(v => v.canal_macro === "LOJA");
+    else if (canalAtivo === "site") base = base.filter(v => v.canal_macro === "SITE");
+
+    const list = base.map(v => v.categoria ? v.categoria.trim() : null).filter(Boolean);
+    return Array.from(new Set(list)).sort();
+  }, [salesData, filterForn, canalAtivo]); // Reage ao filterForn
+
+
+  // --- AUTO-LIMPEZA DE FILTROS ---
+  // Se o usuário mudar de canal ou de fornecedor, e a categoria selecionada não existir mais, limpa ela.
+  useEffect(() => {
+    if (filterCat !== "all" && !categories.includes(filterCat)) setFilterCat("all");
+  }, [categories, filterCat]);
+
+  useEffect(() => {
+    if (filterForn !== "all" && !suppliers.includes(filterForn)) setFilterForn("all");
+  }, [suppliers, filterForn]);
   const toggleRow = (pai: string) => {
     const newSet = new Set(expandedRows);
     if (newSet.has(pai)) newSet.delete(pai);
@@ -123,12 +164,13 @@ function VendasContent() {
     setSortConfig({ key, direction });
   };
 
-  // Filtragem MANTIDA apenas para Canais e Busca de Texto. 
-  // O Filtro de Data FOI REMOVIDO DAQUI pois o Supabase já traz os dados filtrados.
+  // FILTRAGEM FINAL DOS DADOS (Adicionada Categoria)
   const filteredData = useMemo(() => {
     let list = Array.isArray(salesData) ? [...salesData] : []; 
 
+    // Aplicando Filtros de Select
     if (filterForn !== "all") list = list.filter(v => v.fornecedor === filterForn);
+    if (filterCat !== "all") list = list.filter(v => v.categoria === filterCat); // <-- NOVO!
 
     if (canalAtivo === "loja") list = list.filter(v => v.canal_macro === "LOJA");
     else if (canalAtivo === "site") {
@@ -147,7 +189,7 @@ function VendasContent() {
       );
     }
     return list;
-  }, [salesData, canalAtivo, subCanalSite, searchTerm, filterForn]);
+  }, [salesData, canalAtivo, subCanalSite, searchTerm, filterForn, filterCat]); // <- filterCat adicionado nas deps
 
   // Processamento e Agrupamento
   const { kpis, chartData, topProducts, siteBreakdown } = useMemo(() => {
@@ -277,35 +319,61 @@ function VendasContent() {
           </h2>
         </div>
         <div className="flex flex-col w-full xl:w-auto gap-2">
-          <div className="flex flex-col sm:flex-row items-center gap-2 w-full justify-end">
+            <div className="flex flex-col sm:flex-row items-center gap-2 w-full justify-end">
+              
+              {/* BUSCA DE TEXTO */}
+              <div className="relative w-full sm:w-[200px]">
+                <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground"/>
+                <Input placeholder="Buscar produto..." className="pl-9 h-8 text-xs" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+              </div>
+
+              {/* SELECT DE FORNECEDOR */}
+              <div className="relative w-full sm:w-[150px]">
+                <select value={filterForn} onChange={(e) => setFilterForn(e.target.value)} className="flex h-8 w-full appearance-none items-center rounded-md border border-slate-200 bg-white px-3 py-1 text-xs focus:ring-2 focus:ring-blue-500 cursor-pointer truncate">
+                  <option value="all">Fornecedores</option>
+                  {suppliers.map((f: any) => (<option key={f} value={f}>{f}</option>))}
+                </select>
+              </div>
+
+              {/* SELECT DE CATEGORIA */}
+              <div className="relative w-full sm:w-[150px]">
+                <select value={filterCat} onChange={(e) => setFilterCat(e.target.value)} className="flex h-8 w-full appearance-none items-center rounded-md border border-slate-200 bg-white px-3 py-1 text-[10px] focus:ring-2 focus:ring-blue-500 cursor-pointer truncate">
+                  <option value="all">Categorias</option>
+                  {categories.map((c: any) => {
+                    const depth = c.split(' > ').length - 1;
+                    const indent = "\u00A0\u00A0".repeat(depth * 2);
+                    const displayName = c.split(' > ').pop();
+                    return <option key={c} value={c}>{indent}{depth > 0 ? "└ " : ""}{displayName}</option>;
+                  })}
+                </select>
+              </div>
+
+              {/* --- NOVO: BOTÃO DE LIMPAR FILTROS --- */}
+              {(filterForn !== "all" || filterCat !== "all" || searchTerm !== "") && (
+                <Button 
+                  variant="ghost" 
+                  size="sm" 
+                  className="h-8 px-2 text-[10px] font-bold uppercase text-red-500 hover:text-red-700 hover:bg-red-50 shrink-0"
+                  onClick={() => {
+                    setFilterForn("all");
+                    setFilterCat("all");
+                    setSearchTerm("");
+                  }}
+                >
+                  Limpar
+                </Button>
+              )}
+
+              {/* ABAS DE CANAL GERAL/LOJA/SITE */}
+              <Tabs value={canalAtivo} onValueChange={(v: any) => { setCanalAtivo(v); setSubCanalSite("todos"); }} className="w-full sm:w-auto">
+                <TabsList className="grid grid-cols-3 h-8">
+                  <TabsTrigger value="geral" className="text-[11px]">Geral</TabsTrigger>
+                  <TabsTrigger value="loja" className="text-[11px] flex gap-1"><Store size={12}/> Loja</TabsTrigger>
+                  <TabsTrigger value="site" className="text-[11px] flex gap-1"><Globe size={12}/> Site</TabsTrigger>
+                </TabsList>
+              </Tabs>
+            </div>
             
-            {/* BUSCA DE TEXTO */}
-            <div className="relative w-full sm:w-[250px]">
-              <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground"/>
-              <Input placeholder="Buscar produto..." className="pl-9 h-8 text-xs" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
-            </div>
-
-            {/* SELECT DE FORNECEDOR */}
-            <div className="relative w-full sm:w-[180px]">
-              <select
-                value={filterForn}
-                onChange={(e) => setFilterForn(e.target.value)}
-                className="flex h-8 w-full appearance-none items-center rounded-md border border-slate-200 bg-white px-3 py-1 text-xs focus:ring-2 focus:ring-blue-500 cursor-pointer"
-              >
-                <option value="all">Todos Fornecedores</option>
-                {suppliers.map((f: any) => (<option key={f} value={f}>{f}</option>))}
-              </select>
-            </div>
-
-            {/* ABAS DE CANAL GERAL/LOJA/SITE */}
-            <Tabs value={canalAtivo} onValueChange={(v: any) => { setCanalAtivo(v); setSubCanalSite("todos"); }} className="w-full sm:w-auto">
-              <TabsList className="grid grid-cols-3 h-8">
-                <TabsTrigger value="geral" className="text-[11px]">Geral</TabsTrigger>
-                <TabsTrigger value="loja" className="text-[11px] flex gap-1"><Store size={12}/> Loja</TabsTrigger>
-                <TabsTrigger value="site" className="text-[11px] flex gap-1"><Globe size={12}/> Site</TabsTrigger>
-              </TabsList>
-            </Tabs>
-          </div>
           <div className="flex flex-col sm:flex-row items-center gap-2 w-full justify-end">
             {canalAtivo === "site" && (
               <div className="flex items-center gap-1 justify-center bg-slate-50 p-1 rounded-md border">

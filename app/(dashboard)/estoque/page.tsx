@@ -33,6 +33,17 @@ export default function EstoquePage() {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [zoomLevel, setZoomLevel] = useState<number>(1); // <-- LINHA ADICIONADA
   const supabase = createClient();
+  const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 50 });
+
+  // --- NOVO: Proteção contra "Página Vazia" após busca ---
+  // Se os dados diminuírem (ex: usuário fez uma busca) e a página atual não existir mais, 
+  // ele volta para a última página possível em vez de ficar numa tela em branco.
+  useEffect(() => {
+    const maxPageIndex = Math.max(0, Math.ceil(processedData.length / pagination.pageSize) - 1);
+    if (pagination.pageIndex > maxPageIndex) {
+      setPagination(prev => ({ ...prev, pageIndex: maxPageIndex }));
+    }
+  }, [processedData.length, pagination.pageSize, pagination.pageIndex]);
 
   // --- NOVO: Modal de Histórico de Custos ---
   const [historyModal, setHistoryModal] = useState<{isOpen: boolean, sku: string, nome: string, data: any[], loading: boolean}>({
@@ -491,17 +502,22 @@ export default function EstoquePage() {
 const table = useReactTable({
     data: processedData,
     columns,
-    state: { expanded, sorting },
+    state: { expanded, sorting, pagination }, 
     onExpandedChange: setExpanded,
     onSortingChange: setSorting,
+    onPaginationChange: setPagination, 
+    
+    // A MÁGICA: Não reseta a página quando o array de dados é atualizado pelo banco!
+    autoResetPageIndex: false, 
+    
     getCoreRowModel: getCoreRowModel(),
     getExpandedRowModel: getExpandedRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
     getSortedRowModel: getSortedRowModel(),
     getSubRows: (row) => row.children,
     paginateExpandedRows: false,
-    initialState: { pagination: { pageSize: 50 } }
-  });
+    // initialState foi removido porque agora nós controlamos via 'state' e 'useState'
+});
 
   return (
     <div className="space-y-6"> {/* Cria um espaçamento entre o header e a tabela */}

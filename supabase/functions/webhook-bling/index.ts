@@ -27,25 +27,6 @@ const IDS_NATUREZA_DEVOLUCAO = [
   7314982489, 7256147975                  
 ];
 
-const IDS_NATUREZA_IGNORAR_COMPRA = [
-  15107012796, 6937065086, 15103347853, // PortFio ROM/Outros
-  15105899604, 15104895197, 15108451958, // PortCasa ROM
-  15106005559, 15105145131
-];
-
-const BLACKLIST_FORNECEDORES = [
-    "COM DE FIOS E TECIDOS PORTFIO", "VESTIS CONFECCOES LTDA", "COMERCIO DE FIOS E TECIDOS PORTFIO LTDA",
-    "PORTCASA ON LINE LTDA", "MULTIART COMERCIO IMPORTACAO LTDA",
-    "MBF INDUSTRIA DE TECIDOS E CONFECCOES LTDA EPP", "MC IND E CONFECCOES LTDA EPP",
-    "MGM ARTIGOS PARA DECORACAO LTDA", "GR2M CONFECCAO E COMERCIO LTDA",
-    "INDUSTRIA DE TAPETES LANCER S/A", "INDUSTRIA DE PLASTICOS MF LTDA", "INDUSTRIA DE PLASTICOS M F LTDA",
-    "LIN RAN VARIEDADES DOMESTICAS", "LIMA & LIMA COMÉRCIO DE TAPETES - LTDA",
-    "LE PRESENTES LTDA", "KEITA INDUSTRIA E COMERCIO LTDA",
-    "INDUSTRIA E COMERCIO ASHI II LTDA", "PEDROSA FABRICAÇÃO DE ARTEFATOS TÊXTEIS LTDA",
-    "PRATA TEXTIL COM E MANUF DE TAPETES LTDA", "PRATATEXTIL COMERCIO E MANUFATURAS DE TAPETES LTDA",
-    "EBAZAR.COM.BR LTDA", "SONO E CONFORTO COMERCIO LTDA", "WAN XIN IMPORT. CONFEC. E COM. DE ROUPAS E ARMARINHOS LTDA"
-];
-
 const ID_LOJA_PORTFIO_SITE = 204457689; 
 const ID_SIT_FULL = 375989;
 const ID_SIT_ATENDIDO = 9;
@@ -351,12 +332,16 @@ Deno.serve(async (req) => {
         const colIdLoja = `id_bling_${nomeLoja.toLowerCase().replace('_', '')}`;
 
         // --- CORREÇÃO: GARANTIR CATEGORIA DO PAI ---
-        if (p.categoria && p.categoria.id) {
+        // --- NOVA REGRA DE CATEGORIA (Pai) ---
+        // Só atualiza se for PORTCASA ou se for PORTFIO e começar com "1 -"
+        const deveAtualizarCatPai = nomeLoja === 'PORTCASA' || (nomeLoja === 'PORTFIO' && p.nome.trim().startsWith('1 -'));
+
+        if (deveAtualizarCatPai && p.categoria && p.categoria.id) {
             await garantirCategoria(p.categoria.id);
         }
 
-        // 1. Salva o Produto Principal
-        const dadosPrincipais = {
+        // 1. Salva o Produto Principal (Deixamos como 'any' para poder injetar a categoria condicionalmente)
+        const dadosPrincipais: any = {
           sku: skuPrincipal, 
           nome: p.nome, 
           custo_fixo: p.fornecedor?.precoCusto || 0, 
@@ -365,11 +350,15 @@ Deno.serve(async (req) => {
           situacao: p.situacao || 'A',
           formato: p.formato || 'S', 
           gtin: p.gtin || null, 
-          gtin_embalagem: p.gtinEmbalagem || null, // Mapeando gtinEmbalagem do JSON
+          gtin_embalagem: p.gtinEmbalagem || null, 
           fornecedor: p.fornecedor?.contato?.nome || null,
-          categoria_id: p.categoria?.id || null, 
           [colIdLoja]: idBling 
         };
+
+        // Injeta o categoria_id APENAS se passar na regra. Se não passar, o Supabase ignora a coluna e mantém a do banco.
+        if (deveAtualizarCatPai) {
+          dadosPrincipais.categoria_id = p.categoria?.id || null;
+        }
 
         const { error: errPai } = await supabase.from('produtos').upsert(dadosPrincipais, { onConflict: 'sku' });
         if (errPai) console.error(`❌ Erro ao salvar Pai ${skuPrincipal}:`, errPai.message);
@@ -381,31 +370,38 @@ Deno.serve(async (req) => {
             
             for (const v of p.variacoes) {
                 try {
-                    // --- ATUALIZAÇÃO AQUI: GARANTIR CATEGORIA DA VARIAÇÃO ---
-                    // Se a variação tiver uma categoria explicita, garantimos que ela existe antes de salvar
-                    if (v.categoria && v.categoria.id) {
+                    // --- NOVA REGRA DE CATEGORIA (Filho) ---
+                    const deveAtualizarCatFilho = nomeLoja === 'PORTCASA' || (nomeLoja === 'PORTFIO' && v.nome.trim().startsWith('1 -'));
+
+                    if (deveAtualizarCatFilho && v.categoria && v.categoria.id) {
                         await garantirCategoria(v.categoria.id);
                     }
 
                     const custoFilho = v.fornecedor?.precoCusto || p.fornecedor?.precoCusto || 0;
                     const precoFilho = v.preco || 0;
 
-                    await supabase.from('produtos').upsert({
+                    const dadosFilho: any = {
                         sku: v.codigo,
                         nome: v.nome,
                         custo_fixo: custoFilho,
                         preco_venda_padrao: precoFilho, 
-                        tipo: v.tipo || 'P', // Default P
-                        situacao: v.situacao || 'A', // Default A
-                        formato: v.formato || 'S', // Default S
+                        tipo: v.tipo || 'P', 
+                        situacao: v.situacao || 'A', 
+                        formato: v.formato || 'S', 
                         gtin: v.gtin || null,
                         gtin_embalagem: v.gtinEmbalagem || null,
                         fornecedor: v.fornecedor?.contato?.nome || p.fornecedor?.contato?.nome || null,
-                        categoria_id: v.categoria?.id || p.categoria?.id || null,
                         [colIdLoja]: v.id 
-                    }, { onConflict: 'sku' });
-                } catch (errVar) {
-                    console.error(`❌ Erro ao salvar variação ${v.codigo}:`, errVar);
+                    };
+
+                    // Injeta a categoria na variação apenas se passar na regra
+                    if (deveAtualizarCatFilho) {
+                        dadosFilho.categoria_id = v.categoria?.id || p.categoria?.id || null;
+                    }
+
+                    await supabase.from('produtos').upsert(dadosFilho, { onConflict: 'sku' });
+                } catch (errVar) { 
+                    console.error(`❌ Erro em variacao ${v.codigo}`, errVar); 
                 }
             }
         }

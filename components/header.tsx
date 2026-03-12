@@ -9,11 +9,12 @@ import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Badge } from "@/components/ui/badge";
 import { Search, Filter, RotateCcw } from "lucide-react";
-import { useState, useEffect } from "react"; // IMPORTANTE: Adicionar useState e useEffect
+import { useState, useEffect } from "react";
+import { cn } from "@/lib/utils";
 
-// Formatadores (reutilizados)
+// Formatadores
 const fCurrency = (v: number) => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(v || 0);
-const fNum = (v: number) => new Intl.NumberFormat("pt-BR").format(v || 0);
+
 const StockModal = ({ total, site, full, loja, canal }: any) => (
   <Dialog>
     <DialogTrigger asChild>
@@ -27,7 +28,6 @@ const StockModal = ({ total, site, full, loja, canal }: any) => (
       <div className="space-y-4 pt-4 text-sm">
         {(canal === 'geral' || canal === 'site') && (
           <>
-            {/* MUDANÇA: fNum para fCurrency para mostrar em R$ */}
             <div className="flex justify-between border-b pb-2"><span>Valor em Depósito SITE:</span> <span className="font-bold">{fCurrency(site)}</span></div>
             <div className="flex justify-between border-b pb-2"><span>Valor em Depósito FULL:</span> <span className="font-bold">{fCurrency(full)}</span></div>
           </>
@@ -71,39 +71,25 @@ export function DashboardHeader() {
     suppliers, categories 
   } = useDashboard();
 
-  // NOVO ESTADO LOCAL: Segura o texto digitado sem disparar a busca global
   const [localSearch, setLocalSearch] = useState(search);
 
-  // Sincroniza o estado local caso o filtro global seja limpo em outro lugar (ex: botão de reset)
   useEffect(() => {
     setLocalSearch(search);
   }, [search]);
 
-  // Função que dispara a busca real
   const handleSearchSubmit = () => {
     setSearch(localSearch);
   };
 
-  // Função para pegar o "Enter" no teclado
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') {
-      handleSearchSubmit();
-    }
+    if (e.key === 'Enter') handleSearchSubmit();
   };
 
   return (
     <div className="space-y-4"> 
       {/* 1. CARDS DE RESUMO (KPIs) */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        {/* CORREÇÃO: O StockModal já é um Card, não precisa envolver em outro <Card> */}
-        <StockModal 
-            total={totalStats.custo} 
-            site={totalStats.est_site_total} 
-            full={totalStats.est_full_total} 
-            loja={totalStats.est_loja_total} 
-            canal={canal} 
-        />
-
+        <StockModal total={totalStats.custo} site={totalStats.est_site_total} full={totalStats.est_full_total} loja={totalStats.est_loja_total} canal={canal} />
         <RevenueModal canal={canal} title="Receita 30d" total={totalStats.r30} pf={totalStats.bd_pf_30} cm={totalStats.bd_cm_30} full={totalStats.bd_full_30} loja={totalStats.bd_loja_30} color="text-green-600" border="border-green-600" />
         <RevenueModal canal={canal} title="Receita 60d" total={totalStats.r60} pf={totalStats.bd_pf_60} cm={totalStats.bd_cm_60} full={totalStats.bd_full_60} loja={totalStats.bd_loja_60} color="text-green-700" border="border-green-700 opacity-90" />
         <RevenueModal canal={canal} title="Receita 90d" total={totalStats.r90} pf={totalStats.bd_pf_90} cm={totalStats.bd_cm_90} full={totalStats.bd_full_90} loja={totalStats.bd_loja_90} color="text-green-800" border="border-green-800 opacity-80" />
@@ -112,20 +98,9 @@ export function DashboardHeader() {
       {/* 2. BARRA DE AÇÕES */}
       <div className="bg-white p-1 rounded-xl flex items-center gap-4">
         
-        {/* INPUT DE BUSCA CORRIGIDO */}
         <div className="relative flex-1 max-w-md">
-          {/* O ícone de Search agora é clicável e dispara a busca */}
-          <Search 
-            className="absolute left-3 top-3 h-4 w-4 text-muted-foreground cursor-pointer hover:text-blue-500 transition-colors z-10" 
-            onClick={handleSearchSubmit}
-          />
-          <Input 
-            placeholder="Buscar por SKU ou Nome (Aperte Enter)..." 
-            className="pl-10" 
-            value={localSearch} 
-            onChange={(e) => setLocalSearch(e.target.value)}
-            onKeyDown={handleKeyDown} // NOVO: Escuta a tecla Enter
-          />
+          <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground cursor-pointer hover:text-blue-500 transition-colors z-10" onClick={handleSearchSubmit} />
+          <Input placeholder="Buscar por SKU ou Nome (Aperte Enter)..." className="pl-10" value={localSearch} onChange={(e) => setLocalSearch(e.target.value)} onKeyDown={handleKeyDown} />
         </div>
 
         <Tabs value={canal} onValueChange={(v:any) => setCanal(v)} className="hidden md:block">
@@ -144,42 +119,73 @@ export function DashboardHeader() {
               {(filterForn !== 'all' || filterCat !== 'all') && (<Badge className="ml-1 h-5 px-1.5 bg-primary text-[10px]">Ativos</Badge>)}
             </Button>
           </SheetTrigger>
-          <SheetContent className="w-[400px] overflow-y-auto">
-            <SheetHeader className="border-b pb-4 mb-6">
+          <SheetContent className="w-[400px] flex flex-col h-full overflow-hidden p-0">
+            <div className="p-6 border-b shrink-0">
               <SheetTitle className="flex items-center gap-2"><Filter size={20} /> Filtros de Estoque</SheetTitle>
-            </SheetHeader>
-            <div className="space-y-8">
+            </div>
+            
+            {/* O conteúdo rolável fica aqui, dividindo o espaço restante igualmente */}
+            <div className="flex-1 overflow-hidden flex flex-col p-6 space-y-6">
+              
               {/* FILTRO FORNECEDOR */}
-              <div className="space-y-3">
-                <div className="flex justify-between items-center">
+              <div className="flex flex-col h-1/2">
+                <div className="flex justify-between items-center mb-3 shrink-0">
                   <label className="text-sm font-bold uppercase text-slate-500 tracking-wider">Fornecedor</label>
                   {filterForn !== 'all' && <Button variant="ghost" size="sm" className="h-6 text-xs text-blue-600 p-0" onClick={() => setFilterForn('all')}>Limpar</Button>}
                 </div>
-                <div className="grid grid-cols-1 gap-1 max-h-[300px] overflow-y-auto pr-2">
-                  <Button variant={filterForn === 'all' ? 'default' : 'outline'} size="sm" className="justify-start h-8 text-[11px]" onClick={() => setFilterForn('all')}>Todos Fornecedores</Button>
+                {/* Altura preenche o espaço pai e rola */}
+                <div className="flex-1 overflow-y-auto pr-2 flex flex-col gap-1">
+                  <Button variant={filterForn === 'all' ? 'default' : 'outline'} size="sm" className="justify-start h-8 shrink-0 text-[11px]" onClick={() => setFilterForn('all')}>Todos Fornecedores</Button>
                   {suppliers.map(f => (
-                    <Button key={f} variant={filterForn === f ? 'secondary' : 'ghost'} size="sm" className={`justify-start h-8 text-[11px] truncate ${filterForn === f ? 'border-primary ring-1 ring-primary' : ''}`} onClick={() => setFilterForn(f)}>{f}</Button>
+                    <Button key={f} variant={filterForn === f ? 'secondary' : 'ghost'} size="sm" className={`justify-start h-8 shrink-0 text-[11px] truncate ${filterForn === f ? 'border-primary ring-1 ring-primary bg-slate-100 font-bold' : 'text-slate-600 hover:bg-slate-50'}`} onClick={() => setFilterForn(f)}>{f}</Button>
                   ))}
                 </div>
               </div>
-              {/* FILTRO CATEGORIA */}
-              <div className="space-y-3">
-                <div className="flex justify-between items-center">
+
+              {/* FILTRO CATEGORIA EM ÁRVORE */}
+              <div className="flex flex-col h-1/2">
+                <div className="flex justify-between items-center mb-3 shrink-0">
                   <label className="text-sm font-bold uppercase text-slate-500 tracking-wider">Categoria</label>
                   {filterCat !== 'all' && <Button variant="ghost" size="sm" className="h-6 text-xs text-blue-600 p-0" onClick={() => setFilterCat('all')}>Limpar</Button>}
                 </div>
-                <div className="grid grid-cols-1 gap-1 max-h-[300px] overflow-y-auto pr-2">
-                  <Button variant={filterCat === 'all' ? 'default' : 'outline'} size="sm" className="justify-start h-8 text-[11px]" onClick={() => setFilterCat('all')}>Todas Categorias</Button>
-                  {categories.map(c => (
-                    <Button key={c} variant={filterCat === c ? 'secondary' : 'ghost'} size="sm" className={`justify-start h-8 text-[11px] truncate ${filterCat === c ? 'border-primary ring-1 ring-primary' : ''}`} onClick={() => setFilterCat(c)}>{c}</Button>
-                  ))}
+                {/* Altura preenche o espaço pai e rola */}
+                <div className="flex-1 overflow-y-auto pr-2 flex flex-col gap-0.5">
+                  <Button variant={filterCat === 'all' ? 'default' : 'outline'} size="sm" className="justify-start h-8 shrink-0 text-[11px] mb-1" onClick={() => setFilterCat('all')}>Todas Categorias</Button>
+                  
+                  {/* MÁGICA VISUAL AQUI */}
+                  {categories.map(c => {
+                    const parts = c.split(' > '); 
+                    const depth = parts.length - 1; 
+                    const displayName = parts[parts.length - 1]; 
+
+                    return (
+                      <Button 
+                        key={c} 
+                        variant={filterCat === c ? 'secondary' : 'ghost'} 
+                        size="sm" 
+                        title={c} 
+                        className={cn(
+                          "justify-start h-7 shrink-0 text-[11px] truncate transition-all",
+                          filterCat === c ? "border-primary ring-1 ring-primary bg-blue-50 text-blue-700 font-bold" : "text-slate-600 hover:bg-slate-50 font-medium",
+                          depth === 0 && "mt-2 uppercase text-[10px] tracking-wide text-slate-800 bg-slate-100/50" 
+                        )}
+                        style={{ paddingLeft: `${(depth * 16) + 12}px` }}
+                        onClick={() => setFilterCat(c)}
+                      >
+                        {depth > 0 && <span className="text-slate-300 mr-1.5 font-normal">└</span>}
+                        {displayName}
+                      </Button>
+                    );
+                  })}
                 </div>
               </div>
-              <div className="pt-6 border-t">
-                <Button variant="outline" className="w-full flex gap-2" onClick={() => { setFilterCat('all'); setFilterForn('all'); setSearch(''); }}>
-                  <RotateCcw size={14} /> Resetar Tudo
-                </Button>
-              </div>
+            </div>
+
+            {/* Rodapé fixo */}
+            <div className="p-6 border-t shrink-0 bg-slate-50/50">
+              <Button variant="outline" className="w-full flex gap-2" onClick={() => { setFilterCat('all'); setFilterForn('all'); setSearch(''); }}>
+                <RotateCcw size={14} /> Resetar Tudo
+              </Button>
             </div>
           </SheetContent>
         </Sheet>
