@@ -115,8 +115,7 @@ def processar_loja(loja_nome):
                         continue
 
                     val_frete_nota = p.get('transporte', {}).get('frete', 0) or 0
-                    val_ipi_nota = p.get('tributacao', {}).get('totalIPI', 0) or 0
-                    
+                                        
                     desc_obj = p.get('desconto', {})
                     val_desc_nota = desc_obj.get('valor', 0) or 0
                     if desc_obj.get('unidade') == 'PERCENTUAL':
@@ -137,22 +136,27 @@ def processar_loja(loja_nome):
                         
                         if qtd <= 0: continue
 
-                        # ADICIONADO: Salva o ID do Pedido + SKU para comparar com o banco depois
+                        # Salva o ID do Pedido + SKU para comparar com o banco depois
                         itens_processados_agora.add((id_pedido, sku))
 
+                        # Peso financeiro do item (usado apenas para Frete e Desconto Geral)
                         peso = (v_unit * qtd) / soma_bruta_nota
                         
                         desc_un = (val_desc_nota * peso) / qtd
                         frete_un = (val_frete_nota * peso) / qtd
-                        ipi_un = (val_ipi_nota * peso) / qtd
+                        
+                        # --- MÁGICA AQUI: O IPI AGORA É CALCULADO EXATAMENTE PARA ESTE ITEM ---
+                        # Pega a porcentagem do IPI do item (Ex: 15.85) e transforma em valor (Ex: 149.99 * 0.1585)
+                        aliquota_ipi = float(item.get('aliquotaIPI', 0) or 0)
+                        ipi_un = v_unit * (aliquota_ipi / 100.0)
 
                         chave_unica = (id_pedido, sku)
 
                         if chave_unica not in itens_consolidados:
                             itens_consolidados[chave_unica] = {
                                 "id_pedido": id_pedido,
-                                "numero": str(p.get('numero', '')),          # ADICIONADO
-                                "ordem_compra": str(p.get('ordemCompra', '')), # ADICIONADO
+                                "numero": str(p.get('numero', '')),
+                                "ordem_compra": str(p.get('ordemCompra', '')),
                                 "sku": sku,
                                 "data_pedido": limpar_data(p.get('data')),
                                 "data_prevista": limpar_data(p.get('dataPrevista')),
@@ -160,7 +164,7 @@ def processar_loja(loja_nome):
                                 "preco_unitario": v_unit,
                                 "desconto": desc_un,
                                 "frete": frete_un,
-                                "ipi": ipi_un,
+                                "ipi": ipi_un, # <-- Salva o IPI Exato
                                 "fornecedor": nome_forn,
                                 "loja": loja_nome,
                                 "situacao": SITUACOES_MAP.get(sit_valor, "Outros")
