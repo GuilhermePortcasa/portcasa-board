@@ -11,7 +11,7 @@ import {
   Globe, 
   BarChart3,
   Truck,
-  Receipt // Ícone para representar nota/venda
+  Receipt
 } from "lucide-react";
 import Link from "next/link";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
@@ -24,18 +24,26 @@ const COLORS = ['#3b82f6', '#f97316', '#10b981', '#a855f7', '#f43f5e', '#eab308'
 
 export default function VisaoGeralPage() {
   const supabase = createClient();
-  const { rawData, totalStats, loading, filterForn, filterCat } = useDashboard();
-  
+  const { rawData, totalStats, loading, filterForn, filterCat,kpisVendas } = useDashboard();
   const [comprasStats, setComprasStats] = useState({ qtdPedidos: 0, valorTotal: 0, loja: 0, site: 0 });
-  // Novo estado para contagem de pedidos únicos (Vendas)
   const [vendasUnicas, setVendasUnicas] = useState({ total: 0, loja: 0, site: 0 });
+  
+  // NOVO: Estado que avisa se a página ainda está buscando os KPIs assíncronos
+  const [isFetchingKpis, setIsFetchingKpis] = useState(true);
 
   useEffect(() => {
+    let isMounted = true; // Previne atualização de estado se o usuário trocar de página rápido
+
     async function fetchData() {
+      setIsFetchingKpis(true);
+
       // 1. Busca Compras em andamento e separa por canal
       const { data: pedidosRaw } = await supabase
         .from("view_pedidos_detalhados")
-        .select("id_pedido, quantidade, custo_efetivo_pedido, loja"); // Adicionado a coluna "loja"
+        .select("id_pedido, quantidade, custo_efetivo_pedido, loja"); 
+
+      let totalGeral = 0, totalLoja = 0, totalSite = 0;
+      let qtdPeds = 0;
 
       if (pedidosRaw) {
         const groups: Record<string, any> = {};
@@ -47,29 +55,18 @@ export default function VisaoGeralPage() {
           groups[item.id_pedido].valor += (Number(item.quantidade) * Number(item.custo_efetivo_pedido));
         });
 
-        let totalGeral = 0;
-        let totalLoja = 0;
-        let totalSite = 0;
-
         Object.values(groups).forEach(pedido => {
           totalGeral += pedido.valor;
-          // Portcasa é a loja física no Bling, o resto vai pro montante do site
           if (pedido.loja === "PORTCASA") {
             totalLoja += pedido.valor;
           } else {
             totalSite += pedido.valor;
           }
         });
-
-        setComprasStats({
-          qtdPedidos: Object.keys(groups).length,
-          valorTotal: totalGeral,
-          loja: totalLoja,
-          site: totalSite
-        });
+        qtdPeds = Object.keys(groups).length;
       }
 
-      // 2. BUSCA QUANTIDADE DE VENDAS ÚNICAS (Agora filtrando por Fornecedor e Categoria)
+      // 2. BUSCA QUANTIDADE DE VENDAS ÚNICAS
       const dataCorte = format(subDays(new Date(), 30), "yyyy-MM-dd");
       
       let query = supabase
@@ -77,41 +74,42 @@ export default function VisaoGeralPage() {
         .select("id_venda, canal_macro")
         .gte("data_venda", dataCorte);
 
-      // FILTROS ATIVOS NA QUERY
       if (filterForn !== "all") query = query.eq("fornecedor", filterForn);
       if (filterCat !== "all") query = query.eq("categoria", filterCat);
 
       const { data: vendasRaw } = await query;
 
-      if (vendasRaw) {
-        const idsTotal = new Set();
-        const idsLoja = new Set();
-        const idsSite = new Set();
+      const idsTotal = new Set();
+      const idsLoja = new Set();
+      const idsSite = new Set();
 
+      if (vendasRaw) {
         vendasRaw.forEach(v => {
           idsTotal.add(v.id_venda);
           if (v.canal_macro === "LOJA") idsLoja.add(v.id_venda);
           if (v.canal_macro === "SITE") idsSite.add(v.id_venda);
         });
+      }
 
-        setVendasUnicas({
-          total: idsTotal.size,
-          loja: idsLoja.size,
-          site: idsSite.size
-        });
+      // Atualiza os estados apenas se o componente não foi desmontado
+      if (isMounted) {
+        setComprasStats({ qtdPedidos: qtdPeds, valorTotal: totalGeral, loja: totalLoja, site: totalSite });
+        setVendasUnicas({ total: idsTotal.size, loja: idsLoja.size, site: idsSite.size });
+        setIsFetchingKpis(false);
       }
     }
+    
     fetchData();
-  }, [supabase, filterForn, filterCat]); // Filtros adicionados às dependências
+
+    return () => { isMounted = false; };
+  }, [supabase, filterForn, filterCat]);
 
   // Ticket Médio calculado por VENDA (AOV)
   const ticketsMedios = useMemo(() => {
-    // Pegamos a receita total filtrada que vem do Contexto Global
     const faturamentoGeral = totalStats.r30;
     const faturamentoLoja = totalStats.bd_loja_30;
     const faturamentoSite = totalStats.bd_pf_30 + totalStats.bd_full_30 + totalStats.bd_cm_30;
 
-    // Calculamos o ticket dividindo pelas vendas únicas onde os itens filtrados aparecem
     return {
       geral: vendasUnicas.total > 0 ? faturamentoGeral / vendasUnicas.total : 0,
       loja: vendasUnicas.loja > 0 ? faturamentoLoja / vendasUnicas.loja : 0,
@@ -125,7 +123,6 @@ export default function VisaoGeralPage() {
     rawData.forEach(item => {
       const receita = Number(item.rec_30d_site || 0) + Number(item.rec_30d_loja || 0);
       if (receita > 0) {
-        // Usa a NOVA coluna "categoria_raiz" para agrupar as macros no gráfico!
         const cat = item.categoria_raiz || "Outros"; 
         catMap[cat] = (catMap[cat] || 0) + receita;
       }
@@ -150,10 +147,10 @@ export default function VisaoGeralPage() {
         <Card className="border-none shadow-md bg-blue-600 text-white">
           <CardHeader className="pb-2"><CardTitle className="text-xs font-bold uppercase opacity-80">Faturamento</CardTitle></CardHeader>
           <CardContent>
-            <div className="text-2xl font-black">{fCurrency(totalStats.r30)}</div>
+            <div className="text-2xl font-black">{fCurrency(kpisVendas.faturamento30)}</div>
             <div className="flex justify-between mt-2 text-[10px] opacity-80 font-medium">
-              <span className="flex items-center gap-1"><Store size={10}/> {fCurrency(totalStats.bd_loja_30)}</span>
-              <span className="flex items-center gap-1"><Globe size={10}/> {fCurrency(totalStats.bd_pf_30 + totalStats.bd_full_30 + totalStats.bd_cm_30)}</span>
+              <span className="flex items-center gap-1"><Store size={10}/> {fCurrency(kpisVendas.faturamentoLoja30)}</span>
+              <span className="flex items-center gap-1"><Globe size={10}/> {fCurrency(kpisVendas.faturamentoSite30)}</span>
             </div>
           </CardContent>
         </Card>
@@ -174,47 +171,56 @@ export default function VisaoGeralPage() {
           </CardContent>
         </Card>
 
-        {/* TICKET MÉDIO (POR VENDA) */}
+        {/* TICKET MÉDIO (POR VENDA) - PROTEGIDO PELO LOADING */}
         <Card className="border-none shadow-md bg-white">
           <CardHeader className="pb-2">
             <CardTitle className="text-xs font-bold uppercase text-slate-400">Ticket Médio (Venda)</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-black text-slate-800">{fCurrency(ticketsMedios.geral)}</div>
+            <div className="text-2xl font-black text-slate-800">
+              {isFetchingKpis ? <span className="animate-pulse text-slate-300">...</span> : fCurrency(kpisVendas.vendasCount30 > 0 ? kpisVendas.faturamento30 / kpisVendas.vendasCount30 : 0)}
+            </div>
             <div className="flex justify-between mt-2 text-[10px] text-slate-500 font-bold uppercase">
               <span className="flex items-center gap-1 text-orange-600">
-                <Store size={10}/> {fCurrency(ticketsMedios.loja)}
+                <Store size={10}/> 
+                {isFetchingKpis ? "..." : fCurrency(kpisVendas.vendasLoja30 > 0 ? kpisVendas.faturamentoLoja30 / kpisVendas.vendasLoja30 : 0)}
               </span>
               <span className="flex items-center gap-1 text-blue-600">
-                <Globe size={10}/> {fCurrency(ticketsMedios.site)}
+                <Globe size={10}/> 
+                {isFetchingKpis ? "..." : fCurrency(kpisVendas.vendasSite30 > 0 ? kpisVendas.faturamentoSite30 / kpisVendas.vendasSite30 : 0)}
               </span>
             </div>
           </CardContent>
         </Card>
 
-        {/* COMPRAS EM TRÂNSITO */}
+        {/* COMPRAS EM TRÂNSITO - PROTEGIDO PELO LOADING */}
         <Card className="border-none shadow-md bg-white border-l-4 border-l-orange-500">
           <CardHeader className="pb-2">
             <div className="flex items-center justify-between">
               <CardTitle className="text-xs font-bold uppercase text-slate-400">Compras em Trânsito</CardTitle>
-              <span className="text-[10px] text-slate-400 font-bold">{comprasStats.qtdPedidos} peds.</span>
+              <span className="text-[10px] text-slate-400 font-bold">
+                {isFetchingKpis ? "..." : comprasStats.qtdPedidos} peds.
+              </span>
             </div>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-black text-orange-600">{fCurrency(comprasStats.valorTotal)}</div>
+            <div className="text-2xl font-black text-orange-600">
+              {isFetchingKpis ? <span className="animate-pulse text-orange-300">...</span> : fCurrency(comprasStats.valorTotal)}
+            </div>
             <div className="flex justify-between mt-2 text-[10px] text-slate-500 font-bold uppercase">
               <span className="flex items-center gap-1 text-orange-500">
-                <Store size={10}/> {fCurrency(comprasStats.loja)}
+                <Store size={10}/> 
+                {isFetchingKpis ? "..." : fCurrency(comprasStats.loja)}
               </span>
               <span className="flex items-center gap-1 text-orange-500">
-                <Globe size={10}/> {fCurrency(comprasStats.site)}
+                <Globe size={10}/> 
+                {isFetchingKpis ? "..." : fCurrency(comprasStats.site)}
               </span>
             </div>
           </CardContent>
         </Card>
       </div>
 
-      {/* RESTO DO CÓDIGO (GRÁFICOS E LINKS) MANTIDO IGUAL */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <Card className="lg:col-span-2 border-none shadow-md bg-white">
           <CardHeader className="pb-2">

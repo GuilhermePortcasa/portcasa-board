@@ -20,19 +20,29 @@ interface DashboardContextType {
   suppliers: string[];
   categories: string[];
   refreshData: () => Promise<void>;
+  
+  // KPIs de Venda atualizados com as faixas de 30, 60 e 90 dias
+  kpisVendas: { 
+    faturamento30: number, vendasCount30: number, faturamentoLoja30: number, faturamentoSite30: number, vendasLoja30: number, vendasSite30: number,
+    faturamento60: number, faturamentoLoja60: number, faturamentoSite60: number,
+    faturamento90: number, faturamentoLoja90: number, faturamentoSite90: number,
+    pf30: number, cm30: number, full30: number,
+    pf60: number, cm60: number, full60: number,
+    pf90: number, cm90: number, full90: number
+  };
 }
 
 const DashboardContext = createContext<DashboardContextType>({} as DashboardContextType);
 
 export function DashboardProvider({ children }: { children: ReactNode }) {
-  // Memoiza o client do Supabase para ele não ser recriado
   const supabase = useMemo(() => createClient(), []);
   
   const [rawData, setRawData] = useState<any[]>([]);
+  const [vendas90Dias, setVendas90Dias] = useState<any[]>([]);
+  
   const [loading, setLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   
-  // Filtros Globais
   const [canal, setCanal] = useState<"geral" | "loja" | "site">("geral");
   const [search, setSearch] = useState("");
   const [filterForn, setFilterForn] = useState("all");
@@ -41,7 +51,6 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
   const isFirstLoadRef = useRef(true);
 
-  // 1. FETCH OTIMIZADO PARA MATERIALIZED VIEW
   const fetchAll = useCallback(async (isSilent = false) => {
     if (!isSilent) setLoading(true); 
     else setIsRefreshing(true);
@@ -49,57 +58,69 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     try {
       console.time("Tempo de Carga da View");
       
-      const { data, error } = await supabase
-        .from("mview_dashboard_completa") // <-- NOVO NOME AQUI
+      // 1. Busca Estoque e Custos (Apenas MVIEW)
+      const { data: dataEstoque, error: errorEstoque } = await supabase
+        .from("mview_dashboard_completa")
         .select("*")
-        .not("sku", "is", null)          
-      if (error) throw error;
+        .not("sku", "is", null);
+        
+      if (errorEstoque) throw errorEstoque;
 
-      // Normalização dos dados
-      const normalizedData = (data || []).map(item => {
+      const normalizedData = (dataEstoque || []).map(item => {
         let fornLimpo = item.fornecedor;
         if (fornLimpo) {
-          fornLimpo = String(fornLimpo)
-            .normalize("NFD").replace(/[\u0300-\u036f]/g, "") 
-            .toUpperCase() 
-            .replace(/\s+/g, ' ') 
-            .trim();
+          fornLimpo = String(fornLimpo).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().replace(/\s+/g, ' ').trim();
         }
         return { ...item, fornecedor: fornLimpo };
       });
 
       setRawData(normalizedData);
+      
+      // 2. Busca Vendas Brutas dos Últimos 90 Dias
+      const getDateStr = (daysAgo: number) => {
+        const d = new Date();
+        d.setDate(d.getDate() - daysAgo);
+        return d.toISOString().split('T')[0];
+      };
+
+      const dateFrom90 = getDateStr(90);
+      const dateTo = getDateStr(0);
+
+      const { data: dataVendas, error: errorVendas } = await supabase
+        .from("view_vendas_detalhadas")
+        .select("id_venda, data_venda, receita, canal_macro, fornecedor, categoria, canal_detalhado")
+        .gte("data_venda", dateFrom90)
+        .lte("data_venda", `${dateTo}T23:59:59.999Z`)
+        .limit(150000); // 150 mil linhas para garantir que caiba 90 dias com folga
+        
+      if (errorVendas) throw errorVendas;
+      
+      setVendas90Dias(dataVendas || []);
+      
       console.timeEnd("Tempo de Carga da View");
     } catch (err) {
-      console.error("Erro ao buscar dados da View:", err);
+      console.error("Erro ao buscar dados:", err);
     } finally {
       setLoading(false);
       setIsRefreshing(false);
     }
   }, [supabase]);
 
-  // 2. REFRESH EXPOSTO AO CONTEXTO
   const refreshDatabase = useCallback(async () => {
     await fetchAll(true);
   }, [fetchAll]);
 
-  // 3. REALTIME BLINDADO (Conecta uma vez e atualiza no background)
   useEffect(() => {
-    // Carrega a primeira vez se for o load inicial
     if (isFirstLoadRef.current) {
         fetchAll(false);
         isFirstLoadRef.current = false;
     }
 
-    // Canal global ouve mudanças genéricas
     const channel = supabase.channel('global-db-changes')
-      .on('postgres_changes', 
-        { event: '*', schema: 'public' }, 
-        () => {
+      .on('postgres_changes', { event: '*', schema: 'public' }, () => {
           if (debounceRef.current) clearTimeout(debounceRef.current);
           debounceRef.current = setTimeout(() => {
-            console.log("🔄 Alteração detectada no banco. Atualizando a View global em background...");
-            fetchAll(true); // Sempre silencioso no realtime
+            fetchAll(true);
           }, 3000);
       })
       .subscribe();
@@ -108,32 +129,109 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       if (debounceRef.current) clearTimeout(debounceRef.current);
       supabase.removeChannel(channel);
     };
-  }, [fetchAll, supabase]); // O lint fica feliz e a conexão fica estável
+  }, [fetchAll, supabase]);
 
-  // --- FUNÇÃO AUXILIAR: Verifica se o produto pertence ao canal ativo ---
   const isProductInCanal = useCallback((p: any, c: string) => {
-    if (c === "loja") {
-        return p.est_loja !== 0 || (p.v_qtd_120d_geral > 0 && p.v_qtd_90d_loja > 0) || p.qtd_andamento_loja > 0;
-    }
-    if (c === "site") {
-        return (p.est_site + p.est_full) !== 0 || (p.v_qtd_120d_geral > 0 && p.v_qtd_90d_site > 0) || p.qtd_andamento_site > 0;
-    }
-    return p.est_total !== 0 || p.v_qtd_120d_geral > 0 || p.qtd_andamento > 0;
+    if (c === "loja") return p.est_loja !== 0 || p.qtd_andamento_loja > 0 || p.rec_90d_loja > 0;
+    if (c === "site") return (p.est_site + p.est_full) !== 0 || p.qtd_andamento_site > 0 || p.rec_90d_site > 0;
+    return p.est_total !== 0 || p.qtd_andamento > 0 || p.rec_90d_loja > 0 || p.rec_90d_site > 0;
   }, []);
 
-  // 1. FORNECEDORES DINÂMICOS (Filtra por Canal e Categoria)
   const suppliers = useMemo(() => {
     let list = rawData.filter(p => isProductInCanal(p, canal));
     if (filterCat !== "all") list = list.filter(p => p.categoria === filterCat);
     return Array.from(new Set(list.map((p: any) => p.fornecedor).filter(Boolean))).sort();
   }, [rawData, canal, filterCat, isProductInCanal]);
 
-  // 2. CATEGORIAS DINÂMICAS (Filtra por Canal e Fornecedor)
   const categories = useMemo(() => {
     let list = rawData.filter(p => isProductInCanal(p, canal));
     if (filterForn !== "all") list = list.filter(p => p.fornecedor === filterForn);
     return Array.from(new Set(list.map((p: any) => p.categoria).filter(Boolean))).sort();
   }, [rawData, canal, filterForn, isProductInCanal]);
+
+  // --- O NOVO MOTOR DE VENDAS (100% Sincronizado e Dividido em 30/60/90) ---
+  const kpisVendas = useMemo(() => {
+    let list = vendas90Dias;
+    
+    if (filterForn !== "all") list = list.filter(v => {
+        const fornLimpo = v.fornecedor ? String(v.fornecedor).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().replace(/\s+/g, ' ').trim() : "";
+        return fornLimpo === filterForn;
+    });
+    if (filterCat !== "all") list = list.filter(v => v.categoria === filterCat);
+    
+    if (canal === "loja") list = list.filter(v => v.canal_macro === "LOJA");
+    else if (canal === "site") list = list.filter(v => v.canal_macro === "SITE");
+
+    const getDateStr = (daysAgo: number) => {
+        const d = new Date(); d.setDate(d.getDate() - daysAgo);
+        return d.toISOString().split('T')[0];
+    };
+    
+    const limit30 = getDateStr(30);
+    const limit60 = getDateStr(60);
+
+    let faturamento30 = 0, faturamentoLoja30 = 0, faturamentoSite30 = 0;
+    let faturamento60 = 0, faturamentoLoja60 = 0, faturamentoSite60 = 0;
+    let faturamento90 = 0, faturamentoLoja90 = 0, faturamentoSite90 = 0;
+    
+    let pf30 = 0, cm30 = 0, full30 = 0;
+    let pf60 = 0, cm60 = 0, full60 = 0;
+    let pf90 = 0, cm90 = 0, full90 = 0;
+
+    const idsTotal30 = new Set(), idsLoja30 = new Set(), idsSite30 = new Set();
+
+    list.forEach(v => {
+        const rec = Number(v.receita) || 0;
+        const is30 = v.data_venda >= limit30;
+        const is60 = v.data_venda >= limit60;
+
+        // BUCKET 90 DIAS (Todos da lista)
+        faturamento90 += rec;
+        if (v.canal_macro === "LOJA") faturamentoLoja90 += rec;
+        else faturamentoSite90 += rec;
+
+        if (v.canal_detalhado === "SITE_PADRAO" || v.canal_detalhado === "PORTFIO") pf90 += rec;
+        if (v.canal_detalhado === "CASA_MODELO") cm90 += rec;
+        if (v.canal_detalhado === "FULL") full90 += rec;
+
+        // BUCKET 60 DIAS
+        if (is60) {
+            faturamento60 += rec;
+            if (v.canal_macro === "LOJA") faturamentoLoja60 += rec;
+            else faturamentoSite60 += rec;
+
+            if (v.canal_detalhado === "SITE_PADRAO" || v.canal_detalhado === "PORTFIO") pf60 += rec;
+            if (v.canal_detalhado === "CASA_MODELO") cm60 += rec;
+            if (v.canal_detalhado === "FULL") full60 += rec;
+        }
+
+        // BUCKET 30 DIAS
+        if (is30) {
+            faturamento30 += rec;
+            idsTotal30.add(v.id_venda);
+            if (v.canal_macro === "LOJA") {
+                faturamentoLoja30 += rec;
+                idsLoja30.add(v.id_venda);
+            } else {
+                faturamentoSite30 += rec;
+                idsSite30.add(v.id_venda);
+            }
+
+            if (v.canal_detalhado === "SITE_PADRAO" || v.canal_detalhado === "PORTFIO") pf30 += rec;
+            if (v.canal_detalhado === "CASA_MODELO") cm30 += rec;
+            if (v.canal_detalhado === "FULL") full30 += rec;
+        }
+    });
+
+    return {
+        faturamento30, vendasCount30: idsTotal30.size, faturamentoLoja30, faturamentoSite30, vendasLoja30: idsLoja30.size, vendasSite30: idsSite30.size,
+        faturamento60, faturamentoLoja60, faturamentoSite60,
+        faturamento90, faturamentoLoja90, faturamentoSite90,
+        pf30, cm30, full30,
+        pf60, cm60, full60,
+        pf90, cm90, full90
+    };
+  }, [vendas90Dias, canal, filterForn, filterCat]);
 
   // 3. LÓGICA DA TABELA E GRÁFICOS
   const processedData = useMemo(() => {
@@ -258,12 +356,15 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
 
   const totalStats = useMemo(() => {
     return processedData.reduce((acc, g) => {
+      // ESTOQUE (MANTIDO)
       acc.custo += g.inventory_value;
       acc.est_site_total += g.val_est_site;
       acc.est_full_total += g.val_est_full;
       acc.est_loja_total += g.val_est_loja;
 
+      // RECEITAS RETORNADAS AQUI (Para alimentar a Header)
       acc.r30 += g.r_30; acc.r60 += g.r_60; acc.r90 += g.r_90;
+      
       acc.bd_pf_30 += g.r_30_pf; acc.bd_pf_60 += g.r_60_pf; acc.bd_pf_90 += g.r_90_pf;
       acc.bd_cm_30 += g.r_30_cm; acc.bd_cm_60 += g.r_60_cm; acc.bd_cm_90 += g.r_90_cm;
       acc.bd_full_30 += g.r_30_full; acc.bd_full_60 += g.r_60_full; acc.bd_full_90 += g.r_90_full;
@@ -280,7 +381,6 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     });
   }, [processedData]);
 
-  // --- AUTO-LIMPEZA DE FILTROS ---
   useEffect(() => {
     if (filterForn !== "all" && !suppliers.includes(filterForn)) setFilterForn("all");
   }, [suppliers, filterForn]);
@@ -294,7 +394,8 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       rawData, loading, processedData, totalStats, suppliers, categories,
       canal, setCanal, search, setSearch, filterForn, setFilterForn, filterCat, setFilterCat, 
       refreshData: refreshDatabase,
-      isRefreshing
+      isRefreshing,
+      kpisVendas // EXPOSTO PARA A PÁGINA
     }}>
       {children}
     </DashboardContext.Provider>

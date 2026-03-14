@@ -1,5 +1,3 @@
-"use client";
-
 import { useDashboard } from "@/providers/dashboard-context";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -68,7 +66,7 @@ export function DashboardHeader() {
   const { 
     totalStats, canal, setCanal, search, setSearch, 
     filterForn, setFilterForn, filterCat, setFilterCat, 
-    suppliers, categories 
+    suppliers, categories, kpisVendas
   } = useDashboard();
 
   const [localSearch, setLocalSearch] = useState(search);
@@ -90,12 +88,26 @@ export function DashboardHeader() {
       {/* 1. CARDS DE RESUMO (KPIs) */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <StockModal total={totalStats.custo} site={totalStats.est_site_total} full={totalStats.est_full_total} loja={totalStats.est_loja_total} canal={canal} />
-        <RevenueModal canal={canal} title="Receita 30d" total={totalStats.r30} pf={totalStats.bd_pf_30} cm={totalStats.bd_cm_30} full={totalStats.bd_full_30} loja={totalStats.bd_loja_30} color="text-green-600" border="border-green-600" />
-        <RevenueModal canal={canal} title="Receita 60d" total={totalStats.r60} pf={totalStats.bd_pf_60} cm={totalStats.bd_cm_60} full={totalStats.bd_full_60} loja={totalStats.bd_loja_60} color="text-green-700" border="border-green-700 opacity-90" />
-        <RevenueModal canal={canal} title="Receita 90d" total={totalStats.r90} pf={totalStats.bd_pf_90} cm={totalStats.bd_cm_90} full={totalStats.bd_full_90} loja={totalStats.bd_loja_90} color="text-green-800" border="border-green-800 opacity-80" />
+        
+        {/* Receitas Puras do Banco (Inclusas mercadorias Ativas e Inativas) */}
+        <RevenueModal 
+          canal={canal} title="Receita 30d" total={kpisVendas.faturamento30} 
+          pf={kpisVendas.pf30} cm={kpisVendas.cm30} full={kpisVendas.full30} loja={kpisVendas.faturamentoLoja30} 
+          color="text-green-600" border="border-green-600" 
+        />
+        <RevenueModal 
+          canal={canal} title="Receita 60d" total={kpisVendas.faturamento60} 
+          pf={kpisVendas.pf60} cm={kpisVendas.cm60} full={kpisVendas.full60} loja={kpisVendas.faturamentoLoja60} 
+          color="text-green-700" border="border-green-700 opacity-90" 
+        />
+        <RevenueModal 
+          canal={canal} title="Receita 90d" total={kpisVendas.faturamento90} 
+          pf={kpisVendas.pf90} cm={kpisVendas.cm90} full={kpisVendas.full90} loja={kpisVendas.faturamentoLoja90} 
+          color="text-green-800" border="border-green-800 opacity-80" 
+        />
       </div>
 
-      {/* 2. BARRA DE AÇÕES */}
+      {/* 2. BARRA DE AÇÕES (O resto permanece intacto) */}
       <div className="bg-white p-1 rounded-xl flex items-center gap-4">
         
         <div className="relative flex-1 max-w-md">
@@ -124,7 +136,6 @@ export function DashboardHeader() {
               <SheetTitle className="flex items-center gap-2"><Filter size={20} /> Filtros de Estoque</SheetTitle>
             </div>
             
-            {/* O conteúdo rolável fica aqui, dividindo o espaço restante igualmente */}
             <div className="flex-1 overflow-hidden flex flex-col p-6 space-y-6">
               
               {/* FILTRO FORNECEDOR */}
@@ -133,7 +144,6 @@ export function DashboardHeader() {
                   <label className="text-sm font-bold uppercase text-slate-500 tracking-wider">Fornecedor</label>
                   {filterForn !== 'all' && <Button variant="ghost" size="sm" className="h-6 text-xs text-blue-600 p-0" onClick={() => setFilterForn('all')}>Limpar</Button>}
                 </div>
-                {/* Altura preenche o espaço pai e rola */}
                 <div className="flex-1 overflow-y-auto pr-2 flex flex-col gap-1">
                   <Button variant={filterForn === 'all' ? 'default' : 'outline'} size="sm" className="justify-start h-8 shrink-0 text-[11px]" onClick={() => setFilterForn('all')}>Todos Fornecedores</Button>
                   {suppliers.map(f => (
@@ -148,11 +158,9 @@ export function DashboardHeader() {
                   <label className="text-sm font-bold uppercase text-slate-500 tracking-wider">Categoria</label>
                   {filterCat !== 'all' && <Button variant="ghost" size="sm" className="h-6 text-xs text-blue-600 p-0" onClick={() => setFilterCat('all')}>Limpar</Button>}
                 </div>
-                {/* Altura preenche o espaço pai e rola */}
                 <div className="flex-1 overflow-y-auto pr-2 flex flex-col gap-0.5">
                   <Button variant={filterCat === 'all' ? 'default' : 'outline'} size="sm" className="justify-start h-8 shrink-0 text-[11px] mb-1" onClick={() => setFilterCat('all')}>Todas Categorias</Button>
                   
-                  {/* MÁGICA VISUAL AQUI */}
                   {categories.map(c => {
                     const parts = c.split(' > '); 
                     const depth = parts.length - 1; 

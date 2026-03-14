@@ -43,12 +43,23 @@ function VendasContent() {
 
   const [activePreset, setActivePreset] = useState<string>(initialSearch ? "tudo" : "30d");
   
-  const [date, setDate] = useState<DateRange | undefined>(
-    initialSearch ? undefined : { from: subDays(new Date(), 30), to: new Date() }
-  );
+    const [date, setDate] = useState<DateRange | undefined>(
+      initialSearch ? undefined : { 
+        from: new Date(new Date().setDate(new Date().getDate() - 30)), 
+        to: new Date() 
+      }
+    );
   
   const [isCalendarOpen, setIsCalendarOpen] = useState(false);
   const [tempDate, setTempDate] = useState<DateRange | undefined>(date);
+
+  const getDateStr = (daysAgo: number) => {
+      const d = new Date();
+      d.setDate(d.getDate() - daysAgo);
+      return d.toISOString().split('T')[0]; // Retorna YYYY-MM-DD certinho
+    };
+
+
 
   useEffect(() => {
     if (isCalendarOpen) setTempDate(date);
@@ -71,10 +82,14 @@ function VendasContent() {
         setDate(undefined);
         fetchSales(null, null); 
     } else {
-        const from = subDays(new Date(), days);
-        const to = new Date();
-        setDate({ from, to });
-        fetchSales(format(from, "yyyy-MM-dd"), format(to, "yyyy-MM-dd"));
+        const fromStr = getDateStr(days);
+        const toStr = getDateStr(0); // Hoje
+        
+        // Atualiza visualmente o calendário
+        const fromDate = new Date(); fromDate.setDate(fromDate.getDate() - days);
+        setDate({ from: fromDate, to: new Date() });
+        
+        fetchSales(fromStr, toStr);
     }
   };
 
