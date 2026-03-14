@@ -190,7 +190,11 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
             };
 
             items.forEach(p => {
-                const custo = safeNum(p.custo_final);
+                // CUSTOS INTELIGENTES POR CANAL
+                const custo_loja = safeNum(p.custo_final_loja || p.custo_final);
+                const custo_site = safeNum(p.custo_final_site || p.custo_final);
+                const custo_geral = safeNum(p.custo_final);
+
                 const pedItem = safeNum(canal === 'loja' ? p.qtd_andamento_loja : canal === 'site' ? p.qtd_andamento_site : p.qtd_andamento);
 
                 const estSite = safeNum(p.est_site);
@@ -198,9 +202,10 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
                 const estLoja = safeNum(p.est_loja);
                 const estTotal = safeNum(p.est_total);
 
-                const valSite = estSite * custo;
-                const valFull = estFull * custo;
-                const valLoja = estLoja * custo;
+                // Multiplica o estoque daquele local pelo custo daquele local
+                const valSite = estSite * custo_site;
+                const valFull = estFull * custo_site;
+                const valLoja = estLoja * custo_loja;
 
                 group.children.push({ ...p, isParent: false, qtd_ped_atual: pedItem });
 
@@ -236,7 +241,9 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
 
                 const precoUnit = canal === 'site' ? (safeNum(p.ultimo_preco_site) || safeNum(p.preco_venda_padrao)) : safeNum(p.preco_venda_padrao);
                 group.sum_preco += precoUnit;
-                group.sum_unit_cost += safeNum(p.custo_final);
+                
+                // Custo unitário dinâmico para produtos sem estoque (fallback do markup)
+                group.sum_unit_cost += canal === 'loja' ? custo_loja : canal === 'site' ? custo_site : custo_geral;
                 
                 group.count++;
             });

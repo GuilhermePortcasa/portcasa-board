@@ -89,19 +89,21 @@ export default function EstoquePage() {
     };
 
     processedData.forEach((parent: any) => {
-      const processItem = (row: any) => {
-        // Se a linha for zerada em tudo, ignora (retorna null)
+     const processItem = (row: any) => {
         if (!temDadosAtivos(row)) return null;
 
         const precoVenda = isSite ? (row.ultimo_preco_site || row.preco_venda_padrao) : row.preco_venda_padrao;
-        const markup = row.custo_final > 0 ? ((precoVenda - row.custo_final) / row.custo_final) : 0;
+        
+        // Puxa o custo do canal
+        const c_custo = canal === 'loja' ? (row.custo_final_loja || row.custo_final) : canal === 'site' ? (row.custo_final_site || row.custo_final) : row.custo_final;
+        const markup = c_custo > 0 ? ((precoVenda - c_custo) / c_custo) : 0;
         
         // 1. Colunas Iniciais
         const item: any = {
           "SKU": row.sku,
           "nome": row.nome,
           "venda": Number(precoVenda || 0), 
-          "custo médio": Number(row.custo_final || 0),
+          "custo médio": Number(c_custo || 0),
           "Markup (em %)": Number(markup || 0),
           "estoque": Number(isSite ? (row.est_site + row.est_full) : (row.est_lo_total || row.est_loja)),
         };
@@ -402,15 +404,17 @@ export default function EstoquePage() {
           
           children.forEach((c: any) => {
             const qtd = canal === 'loja' ? c.est_loja : canal === 'site' ? (c.est_site + c.est_full) : c.est_total;
+            const c_custo = canal === 'loja' ? (c.custo_final_loja || c.custo_final) : canal === 'site' ? (c.custo_final_site || c.custo_final) : c.custo_final;
+            
             if (qtd > 0) {
-              totalEstoqueValue += (qtd * c.custo_final);
+              totalEstoqueValue += (qtd * c_custo);
               totalEstoqueQtd += qtd;
             }
           });
           
           custo = totalEstoqueQtd > 0 ? (totalEstoqueValue / totalEstoqueQtd) : (row.original.sum_unit_cost / (row.original.count || 1));
         } else {
-          custo = row.original.custo_final;
+          custo = canal === 'loja' ? (row.original.custo_final_loja || row.original.custo_final) : canal === 'site' ? (row.original.custo_final_site || row.original.custo_final) : row.original.custo_final;
         }
 
         const isParent = row.original.isParent;
@@ -474,21 +478,22 @@ export default function EstoquePage() {
         const isParent = row.original.isParent;
         let c = 0;
 
-        // Repetimos o cálculo ponderado aqui para o Markup ser perfeito
         if (isParent) {
           const children = row.original.children || [];
           let totalEstoqueValue = 0;
           let totalEstoqueQtd = 0;
           children.forEach((child: any) => {
             const qtd = canal === 'loja' ? child.est_loja : canal === 'site' ? (child.est_site + child.est_full) : child.est_total;
+            const c_custo = canal === 'loja' ? (child.custo_final_loja || child.custo_final) : canal === 'site' ? (child.custo_final_site || child.custo_final) : child.custo_final;
+            
             if (qtd > 0) {
-              totalEstoqueValue += (qtd * child.custo_final);
+              totalEstoqueValue += (qtd * c_custo);
               totalEstoqueQtd += qtd;
             }
           });
           c = totalEstoqueQtd > 0 ? (totalEstoqueValue / totalEstoqueQtd) : (row.original.sum_unit_cost / (row.original.count || 1));
         } else {
-          c = row.original.custo_final;
+          c = canal === 'loja' ? (row.original.custo_final_loja || row.original.custo_final) : canal === 'site' ? (row.original.custo_final_site || row.original.custo_final) : row.original.custo_final;
         }
 
         const p = isParent ? (row.original.sum_preco / (row.original.count || 1)) : (canal === 'site' ? (row.original.ultimo_preco_site || row.original.preco_venda_padrao) : row.original.preco_venda_padrao);
